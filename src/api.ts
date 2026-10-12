@@ -222,7 +222,7 @@ export async function getSessions(params?: {
   journey_id?: string;
   status?: string;
 }): Promise<Session[]> {
-  const query = new URLSearchParams();
+  const query = new URLSearchParams({view:'effective'});
   if (params?.journey_id) query.set('journey_id', params.journey_id);
   if (params?.status) query.set('status', params.status);
 
@@ -276,7 +276,7 @@ export async function startSession(payload: {
 }
 
 export async function getSession(id: string): Promise<Session> {
-  const res = await apiFetch(`${API_BASE}/sessions/${id}`);
+  const res = await apiFetch(`${API_BASE}/sessions/${id}?view=effective`);
   if (!res.ok) throw new Error(`Failed to fetch session: ${res.statusText}`);
   return res.json();
 }
@@ -393,13 +393,13 @@ export async function reviseIntention(
 
 // --- Session Entries ---
 export async function getAllEntries(): Promise<SessionEntry[]> {
-  const res = await apiFetch(`${API_BASE}/entries`);
+  const res = await apiFetch(`${API_BASE}/entries?view=effective`);
   if (!res.ok) throw new Error(`Failed to fetch entries: ${res.statusText}`);
   return res.json();
 }
 
 export async function getSessionEntries(sessionId: string): Promise<SessionEntry[]> {
-  const res = await apiFetch(`${API_BASE}/sessions/${sessionId}/entries`);
+  const res = await apiFetch(`${API_BASE}/sessions/${sessionId}/entries?view=effective`);
   if (!res.ok) throw new Error(`Failed to fetch entries: ${res.statusText}`);
   return res.json();
 }
@@ -593,7 +593,7 @@ export async function triggerMarkdownExport(): Promise<{
   export_dir: string;
   zip_url: string;
 }> {
-  const res = await apiFetch(`${API_BASE}/export/markdown`, { method: 'POST' });
+  const res = await apiFetch(`${API_BASE}/export/markdown`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Export generation failed');
@@ -615,3 +615,7 @@ export async function getBoardData(journeyId?: string): Promise<BoardData> {
 }
 
 
+
+export async function downloadExport(url:string) { const response=await apiFetch(url); if(!response.ok)throw new Error('Export download failed'); const blob=await response.blob(); const href=URL.createObjectURL(blob);const link=document.createElement('a');link.href=href;link.download='human_drift_markdown_export.zip';link.click();setTimeout(()=>URL.revokeObjectURL(href),1000); }
+
+export async function getSessionEvidence(id:string) {const res=await apiFetch(`/api/sessions/${id}/evidence`);if(!res.ok)throw new Error('Could not load original evidence');return res.json();}

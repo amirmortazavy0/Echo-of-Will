@@ -6,3 +6,12 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Private baseline snapshots, runtime evidence and generated artifacts
+.private/
+test-results/
+playwright-report/
+backend/data/
+backend/users.json
+data/
+export/

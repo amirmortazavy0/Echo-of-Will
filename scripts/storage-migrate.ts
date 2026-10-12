@@ -1,0 +1,10 @@
+import { inspectStorageFile, migrateStorageFile, fileHash, getCanonicalStoragePath } from '../server/storage';
+const args=process.argv.slice(2);
+const option=(key:string)=>args[args.indexOf(key)+1];
+if(!args.includes('--source')) throw new Error('Usage: npm run storage:migrate -- --source <selected JSON> [--apply --sha256 <reviewed source hash> --canonical-sha256 <reviewed existing canonical hash>]');
+const source=option('--source');
+const inspection=inspectStorageFile(source);
+const apply=args.includes('--apply');
+if(apply && !args.includes('--sha256')) throw new Error('Apply requires the SHA-256 from a reviewed dry run');
+const report=migrateStorageFile(source,apply?option('--sha256'):inspection.sha256!,apply,args.includes('--canonical-sha256')?option('--canonical-sha256'):undefined);
+console.log(JSON.stringify({...report, canonical_sha256:fileHash(getCanonicalStoragePath()), counts:Object.fromEntries(Object.entries(inspection.data).filter(([,value])=>Array.isArray(value)).map(([key,value])=>[key,(value as any[]).length]))},null,2));

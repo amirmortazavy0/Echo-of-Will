@@ -1,3 +1,4 @@
+import { downloadExport } from './api';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Sparkles,
@@ -76,10 +77,10 @@ export default function App() {
 
   // Active Session & Sticky Condition State
   const [currentCondition, setCurrentCondition] = useState<Condition>({
-    energy: 'MEDIUM',
-    focus: 'NORMAL',
-    location: 'HOME',
-    environment: 'QUIET',
+    energy: 'UNKNOWN',
+    focus: 'UNKNOWN',
+    location: 'UNKNOWN',
+    environment: 'UNKNOWN',
   });
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [sessionElapsedMinutes, setSessionElapsedMinutes] = useState(0);
@@ -133,7 +134,7 @@ export default function App() {
       if (ongoing) {
         setActiveSession(ongoing);
         // Find last entry condition if available
-        const sEntries = safeEntries.filter((e) => e.session_id === ongoing.id);
+        const sEntries = safeEntries.filter((e) => e.session_id === ongoing.id).sort((a,b)=>Date.parse(a.logged_at)-Date.parse(b.logged_at));
         if (sEntries.length > 0 && sEntries[sEntries.length - 1].condition) {
           setCurrentCondition(sEntries[sEntries.length - 1].condition);
         }
@@ -238,7 +239,7 @@ export default function App() {
       const res = await triggerMarkdownExport();
       setExportNotice('Export complete! Downloading Obsidian zip archive...');
       // Trigger browser download
-      window.location.href = res.zip_url || '/api/export/download';
+      await downloadExport(res.zip_url);
       setTimeout(() => setExportNotice(null), 5000);
     } catch (err: any) {
       setExportError(true);
@@ -301,7 +302,7 @@ export default function App() {
                 </span>
               </div>
               <p className="text-[11px] text-zinc-400 hidden sm:block">
-                Plans are preserved. Reality is logged. The gap is Drift.
+                Intentions are preserved. Reports remain evidence.
               </p>
             </div>
           </div>
@@ -437,7 +438,7 @@ export default function App() {
             }`}
           >
             <Compass className="w-3.5 h-3.5 text-amber-400" />
-            <span>4. Drift</span>
+            <span>4. Review</span>
           </button>
 
           <div className="w-px h-4 bg-zinc-800 mx-1 flex-shrink-0" />
@@ -567,16 +568,6 @@ export default function App() {
         onStatusUpdated={(st) => setOllamaStatus(st)}
       />
 
-      <CreateThingModal
-        isOpen={showCreateThingModal}
-        onClose={() => setShowCreateThingModal(false)}
-        journeys={journeys}
-        onCreated={async () => {
-          await loadData();
-          setActiveTab('BOARD');
-        }}
-      />
-
       <StartSessionModal
         isOpen={showStartModal}
         onClose={() => setShowStartModal(false)}
@@ -594,6 +585,10 @@ export default function App() {
 
       {activeSession && (
         <ActiveSessionModal
+          key={activeSession.id}
+          nodes={nodes}
+          journeys={journeys}
+          onSessionSwitched={(session) => { setActiveSession(session); loadData(); }}
           isOpen={showActiveModal}
           onClose={() => setShowActiveModal(false)}
           session={activeSession}

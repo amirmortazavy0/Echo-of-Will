@@ -1,334 +1,48 @@
-import React, { useState } from 'react';
-import {
-  Condition,
-  EntryType,
-  Journey,
-  Node,
-  Session,
-} from '../types';
-import { logSessionEntry, completeSession } from '../api';
-import { formatEntryType, formatLocalTime } from '../utils/formatters';
-import {
-  PlusCircle,
-  Square,
-  Sparkles,
-  X,
-  Clock,
-  BatteryCharging,
-  Brain,
-  CheckCircle2,
-} from 'lucide-react';
-
-interface ActiveSessionModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  session: Session;
-  journey?: Journey;
-  node?: Node;
-  currentCondition: Condition;
-  onConditionChange?: (condition: Condition) => void;
-  onSessionEnded: () => void;
-  onEntryAdded: () => void;
+import React,{useEffect,useState} from 'react';
+import type {Condition,EntryType,Journey,Node,Session,SessionEntry,SessionQuality} from '../types';
+import {logSessionEntry,completeSession,reviseIntention,switchJourneySession,getSessionEntries} from '../api';
+import {CorrectionModal} from './CorrectionModal';
+export function ActiveSessionModal({isOpen,onClose,session,journey,node,nodes,journeys,currentCondition,onSessionEnded,onEntryAdded,onSessionSwitched}:{isOpen:boolean;onClose:()=>void;session:Session;journey?:Journey;node?:Node;nodes:Node[];journeys:Journey[];currentCondition:Condition;onConditionChange?:(c:Condition)=>void;onSessionEnded:()=>void;onEntryAdded:()=>void;onSessionSwitched:(s:Session)=>void}) {
+ const [kind,setKind]=useState<EntryType>('NOTE'),[note,setNote]=useState(''),[target,setTarget]=useState(node?.id||''),[discovery,setDiscovery]=useState(''),[parent,setParent]=useState('');
+ const [condition,setCondition]=useState(currentCondition),[entries,setEntries]=useState<SessionEntry[]>([]),[correcting,setCorrecting]=useState<SessionEntry|null>(null);
+ const [revision,setRevision]=useState(''),[reason,setReason]=useState(''),[destination,setDestination]=useState(''),[destNode,setDestNode]=useState('');
+ const [ending,setEnding]=useState(false),[quality,setQuality]=useState<SessionQuality|null>(null),[endReason,setEndReason]=useState<any>('NATURAL_COMPLETION'),[reflection,setReflection]=useState('');
+ const [busy,setBusy]=useState(false),[error,setError]=useState('');
+ const input='w-full rounded border border-zinc-700 bg-zinc-950 p-2 text-zinc-100';
+ const refresh=async()=>{const list=await getSessionEntries(session.id);setEntries(list);if(list.length)setCondition(list.at(-1)!.condition);};
+ useEffect(()=>{if(isOpen){setTarget(node?.id||'');setNote('');setRevision('');setReason('');setEnding(false);void refresh().catch(e=>setError(e.message));}},[session.id,isOpen]);
+ if(!isOpen)return null;
+ const run=async(action:()=>Promise<void>)=>{setBusy(true);setError('');try{await action();}catch(e:any){setError(e.message);}finally{setBusy(false);}};
+ const submit=(e:React.FormEvent)=>{e.preventDefault();void run(async()=>{
+  await logSessionEntry(session.id,{entry_type:kind,node_id:target||null,note:note||null,condition,...(kind==='DISCOVERY'?{discovery_node:{name:discovery,parent_id:parent||null,description:note}}:{})});
+  setNote('');setDiscovery('');await refresh();onEntryAdded();
+ });};
+ return <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 p-4"><div role="dialog" aria-label="Tracking Session" className="mx-auto max-w-2xl space-y-4 rounded-2xl border border-zinc-700 bg-zinc-900 p-6 text-zinc-100">
+ <div className="flex justify-between"><h2>Tracking Session</h2><button onClick={onClose} aria-label="Close">Close</button></div>
+ <p>{journey?.name}</p><h3>"{session.intention}"</h3><p className="text-xs text-zinc-400">Original intention is preserved. Revisions are appended below.</p>
+ {error&&<p role="alert" className="text-red-300">{error}</p>}
+ <fieldset className="grid grid-cols-2 gap-2"><legend>Condition for next entry</legend>{Object.entries({energy:['UNKNOWN','LOW','MEDIUM','HIGH'],focus:['UNKNOWN','SCATTERED','NORMAL','DEEP'],location:['UNKNOWN','HOME','OFFICE','CAFE','TRANSIT','OTHER'],environment:['UNKNOWN','QUIET','AMBIENT','NOISY']}).map(([field,values])=><label key={field}>{field}<select aria-label={'Live '+field} className={input} value={condition[field]} onChange={e=>setCondition({...condition,[field]:e.target.value})}>{values.map(v=><option key={v}>{v}</option>)}</select></label>)}</fieldset>
+ <form onSubmit={submit} className="space-y-3">
+ <div className="flex flex-wrap gap-2">{[['NOTE','Quick Note'],['TASK_STARTED','Start task'],['TASK_PAUSED','Pause task'],['TASK_COMPLETED','Complete task'],['DISCOVERY','Discovery'],['CONTEXT_SWITCH','Switch Node'],['CONDITION_CHANGED','Condition change']].map(([value,label])=><button key={value} type="button" aria-pressed={kind===value} className="rounded border p-2" onClick={()=>setKind(value as EntryType)}>{label}</button>)}</div>
+ <label>Node / switch destination<select aria-label="Live Node" className={input} required={kind==='CONTEXT_SWITCH'} value={target} onChange={e=>setTarget(e.target.value)}><option value="">No Node</option>{nodes.filter(n=>n.journey_id===session.journey_id).map(n=><option key={n.id} value={n.id}>{n.name}</option>)}</select></label>
+ {kind==='DISCOVERY'&&<><input required aria-label="Live discovery name" className={input} value={discovery} onChange={e=>setDiscovery(e.target.value)} placeholder="Discovery name"/><select aria-label="Live discovery parent" className={input} value={parent} onChange={e=>setParent(e.target.value)}><option value="">No parent</option>{nodes.filter(n=>n.journey_id===session.journey_id).map(n=><option key={n.id} value={n.id}>{n.name}</option>)}</select></>}
+ <textarea className={input} placeholder="What happened or what did you accomplish?" value={note} onChange={e=>setNote(e.target.value)}/>
+ <button disabled={busy} type="submit" className="rounded bg-amber-400 p-2 text-zinc-950">Record Entry</button>
+ </form>
+ <details><summary>Revise intention or move to another Thing</summary><div className="space-y-2 pt-3">
+ <input aria-label="New intention" className={input} placeholder="New intention" value={revision} onChange={e=>setRevision(e.target.value)}/>
+ <input aria-label="Change reason" className={input} placeholder="Why is it changing?" value={reason} onChange={e=>setReason(e.target.value)}/>
+ <button disabled={busy||!revision.trim()} onClick={()=>run(async()=>{await reviseIntention(session.id,{new_intention:revision,reason,condition});setRevision('');setReason('');await refresh();onEntryAdded();})}>Append intention revision</button>
+ <select aria-label="Destination Thing" className={input} value={destination} onChange={e=>{setDestination(e.target.value);setDestNode('');}}><option value="">Choose another Thing</option>{journeys.filter(j=>j.id!==session.journey_id).map(j=><option key={j.id} value={j.id}>{j.name}</option>)}</select>
+ <select aria-label="Destination Node" className={input} value={destNode} onChange={e=>setDestNode(e.target.value)}><option value="">No Node</option>{nodes.filter(n=>n.journey_id===destination).map(n=><option key={n.id} value={n.id}>{n.name}</option>)}</select>
+ <button disabled={busy||!destination||!revision.trim()} onClick={()=>run(async()=>{const result=await switchJourneySession(session.id,{target_journey_id:destination,target_node_id:destNode||null,new_intention:revision,switch_reason:reason,condition});onSessionSwitched(result.new_session);})}>Move to selected Thing</button>
+ </div></details>
+ <details><summary>Entries and corrections ({entries.length})</summary>{entries.map(e=><div key={e.id} className="border-b border-zinc-700 py-2"><p>{e.entry_type}: {e.note}</p><button onClick={()=>setCorrecting(e)}>Correct entry</button></div>)}</details>
+ <button onClick={()=>setEnding(!ending)}>Conclude Tracking</button>
+ {ending&&<div className="space-y-3"><label>End reason<select aria-label="End reason" className={input} value={endReason} onChange={e=>setEndReason(e.target.value)}>{['NATURAL_COMPLETION','INTERRUPTED','DRIFTED','ENERGY_DEPLETED','PAUSED','INCOMPLETE'].map(v=><option key={v}>{v}</option>)}</select></label><textarea aria-label="Reflection" className={input} value={reflection} onChange={e=>setReflection(e.target.value)}/>
+ <div className="flex gap-2">{[['','Skip Rating'],['POOR','Struggled'],['FAIR','Fair'],['GOOD','Good'],['EXCELLENT','Excellent']].map(([v,label])=><button key={v} aria-pressed={quality===v} onClick={()=>setQuality(v as SessionQuality||null)}>{label}</button>)}</div>
+ <button disabled={busy} onClick={()=>run(async()=>{await completeSession(session.id,{end_reason:endReason,quality,reflection});onSessionEnded();onClose();})}>End Session</button></div>}
+ {correcting&&<CorrectionModal entry={correcting} onClose={()=>setCorrecting(null)} onSaved={()=>{void refresh();onEntryAdded();}}/>}
+ </div></div>;
 }
 
-export const ActiveSessionModal: React.FC<ActiveSessionModalProps> = ({
-  isOpen,
-  onClose,
-  session,
-  journey,
-  node,
-  currentCondition,
-  onConditionChange,
-  onSessionEnded,
-  onEntryAdded,
-}) => {
-  const [entryType, setEntryType] = useState<EntryType>('TASK_STARTED');
-  const [note, setNote] = useState('');
-  const [activeCondition, setActiveCondition] = useState<Condition>(currentCondition);
-  const [isSubmittingEntry, setIsSubmittingEntry] = useState(false);
-
-  // Ending session states
-  const [isEnding, setIsEnding] = useState(false);
-  const [reflection, setReflection] = useState('');
-  const [ratingOption, setRatingOption] = useState<'SKIP' | 'GOOD' | 'NORMAL' | 'POOR'>('SKIP');
-  const [endReason, setEndReason] = useState<
-    'NATURAL_COMPLETION' | 'INTERRUPTED' | 'DRIFTED' | 'ENERGY_DEPLETED'
-  >('NATURAL_COMPLETION');
-
-  if (!isOpen) return null;
-
-  const updateConditionField = (field: keyof Condition, val: any) => {
-    const updated = { ...activeCondition, [field]: val };
-    setActiveCondition(updated);
-    if (onConditionChange) onConditionChange(updated);
-  };
-
-  const handleAddEntry = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmittingEntry(true);
-
-    try {
-      await logSessionEntry(session.id, {
-        node_id: node?.id || null,
-        entry_type: entryType,
-        note: note.trim() || null,
-        condition: activeCondition,
-      });
-
-      setNote('');
-      onEntryAdded();
-    } catch (err: any) {
-      alert(`Error logging entry: ${err.message}`);
-    } finally {
-      setIsSubmittingEntry(false);
-    }
-  };
-
-  const handleComplete = async () => {
-    try {
-      await completeSession(session.id, {
-        end_reason: endReason,
-        reflection: reflection.trim() || null,
-        quality: ratingOption === 'SKIP' ? null : ratingOption,
-      });
-      onSessionEnded();
-      onClose();
-    } catch (err: any) {
-      alert(`Error ending session: ${err.message}`);
-    }
-  };
-
-  const ENTRY_CHOICES: EntryType[] = [
-    'TASK_STARTED',
-    'NOTE',
-    'CONTEXT_SWITCH',
-    'DISCOVERY',
-    'TASK_PAUSED',
-    'TASK_COMPLETED',
-  ];
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-      <div className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl p-6 relative space-y-4">
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute top-4 right-4 p-1.5 text-zinc-400 hover:text-zinc-200 rounded-lg hover:bg-zinc-800 transition"
-          aria-label="Close"
-        >
-          <X className="w-4 h-4" />
-        </button>
-
-        {/* Header: Thing & Intention */}
-        <div className="space-y-1">
-          <div className="flex items-center gap-2 text-xs text-amber-400 font-medium">
-            <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse"></span>
-            <span>Tracking Session</span>
-            <span className="text-zinc-500">•</span>
-            <span className="text-zinc-300 font-semibold">{journey?.name || 'Active Thing'}</span>
-          </div>
-          <h3 className="text-base font-bold text-zinc-100">
-            "{session.intention}"
-          </h3>
-          <p className="text-[11px] text-zinc-400 flex items-center gap-1">
-            <Clock className="w-3 h-3 text-zinc-500" />
-            <span>Started at {formatLocalTime(session.started_at)}</span>
-          </p>
-        </div>
-
-        {/* Live Condition Adjuster (Focus & Energy are mutable) */}
-        <div className="bg-zinc-950/60 p-3 rounded-xl border border-zinc-800/80 space-y-2">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="text-zinc-400 font-medium">Current Condition (editable):</span>
-            <span className="text-zinc-500">Tap to adjust anytime</span>
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            {/* Energy */}
-            <div className="flex items-center justify-between bg-zinc-900 px-2.5 py-1.5 rounded-lg border border-zinc-800">
-              <span className="text-zinc-400 text-[11px] flex items-center gap-1">
-                <BatteryCharging className="w-3 h-3 text-emerald-400" />
-                Energy:
-              </span>
-              <select
-                value={activeCondition.energy}
-                onChange={(e) => updateConditionField('energy', e.target.value)}
-                className="bg-transparent text-zinc-200 font-medium text-xs focus:outline-none cursor-pointer"
-              >
-                <option value="LOW" className="bg-zinc-900">Low</option>
-                <option value="MEDIUM" className="bg-zinc-900">Medium</option>
-                <option value="HIGH" className="bg-zinc-900">High</option>
-              </select>
-            </div>
-
-            {/* Focus */}
-            <div className="flex items-center justify-between bg-zinc-900 px-2.5 py-1.5 rounded-lg border border-zinc-800">
-              <span className="text-zinc-400 text-[11px] flex items-center gap-1">
-                <Brain className="w-3 h-3 text-cyan-400" />
-                Focus:
-              </span>
-              <select
-                value={activeCondition.focus}
-                onChange={(e) => updateConditionField('focus', e.target.value)}
-                className="bg-transparent text-zinc-200 font-medium text-xs focus:outline-none cursor-pointer"
-              >
-                <option value="SCATTERED" className="bg-zinc-900">Scattered</option>
-                <option value="NORMAL" className="bg-zinc-900">Normal</option>
-                <option value="DEEP" className="bg-zinc-900">Deep</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        {/* Log Immediate Event Entry Form */}
-        {!isEnding ? (
-          <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 space-y-3">
-            <h4 className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
-              <PlusCircle className="w-3.5 h-3.5 text-amber-400" />
-              <span>Log Entry to Timeline</span>
-            </h4>
-
-            <form onSubmit={handleAddEntry} className="space-y-3 text-xs">
-              <div className="flex flex-wrap gap-1.5">
-                {ENTRY_CHOICES.map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setEntryType(t)}
-                    className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-                      entryType === t
-                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 font-bold shadow-sm'
-                        : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-zinc-200'
-                    }`}
-                  >
-                    {formatEntryType(t)}
-                  </button>
-                ))}
-              </div>
-
-              <input
-                type="text"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="What happened or what did you accomplish? (e.g. built login route, hit a blocker...)"
-                className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-500"
-              />
-
-              <div className="flex items-center justify-between pt-1">
-                <span className="text-[11px] text-zinc-500">
-                  Logs under {journey?.name || 'Thing'}
-                </span>
-                <button
-                  type="submit"
-                  disabled={isSubmittingEntry}
-                  className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-zinc-950 text-xs font-bold rounded-lg transition-all cursor-pointer"
-                >
-                  {isSubmittingEntry ? 'Logging...' : 'Record Entry'}
-                </button>
-              </div>
-            </form>
-          </div>
-        ) : (
-          /* Ending Session Form */
-          <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 space-y-3.5 animate-fade-in text-xs">
-            <h4 className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
-              <Square className="w-3.5 h-3.5 text-rose-400" />
-              <span>Conclude Tracking</span>
-            </h4>
-
-            <div>
-              <label className="block text-[11px] text-zinc-400 mb-1 font-medium">Outcome / Reason</label>
-              <select
-                value={endReason}
-                onChange={(e) => setEndReason(e.target.value as any)}
-                className="w-full bg-zinc-900 border border-zinc-700 text-zinc-200 rounded-xl p-2 text-xs focus:outline-none"
-              >
-                <option value="NATURAL_COMPLETION">Natural Completion</option>
-                <option value="INTERRUPTED">Interrupted</option>
-                <option value="DRIFTED">Drifted / Off-track</option>
-                <option value="ENERGY_DEPLETED">Energy Depleted</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-zinc-400 mb-1 font-medium">
-                Session Rating <span className="text-zinc-500">(optional)</span>
-              </label>
-              <div className="grid grid-cols-4 gap-1.5">
-                {[
-                  { key: 'SKIP', label: 'No rating' },
-                  { key: 'GOOD', label: 'Good' },
-                  { key: 'NORMAL', label: 'Normal' },
-                  { key: 'POOR', label: 'Poor' },
-                ].map((opt) => (
-                  <button
-                    key={opt.key}
-                    type="button"
-                    onClick={() => setRatingOption(opt.key as any)}
-                    className={`py-1.5 px-2 rounded-lg border text-center text-xs font-medium transition ${
-                      ratingOption === opt.key
-                        ? 'bg-zinc-800 border-zinc-600 text-white font-bold'
-                        : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-zinc-400 mb-1 font-medium">
-                Reflection <span className="text-zinc-500">(optional)</span>
-              </label>
-              <textarea
-                value={reflection}
-                onChange={(e) => setReflection(e.target.value)}
-                placeholder="How did this session compare to your starting focus? Did drift occur?"
-                rows={2}
-                className="w-full bg-zinc-900 border border-zinc-700 text-zinc-200 placeholder-zinc-500 rounded-xl p-2.5 text-xs focus:outline-none resize-none"
-              />
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800">
-              <button
-                type="button"
-                onClick={() => setIsEnding(false)}
-                className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200"
-              >
-                Back
-              </button>
-              <button
-                type="button"
-                onClick={handleComplete}
-                className="px-4 py-2 bg-rose-500 hover:bg-rose-400 text-white font-bold rounded-xl text-xs transition cursor-pointer"
-              >
-                End Session
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Footer Actions */}
-        {!isEnding && (
-          <div className="flex items-center justify-between pt-2 border-t border-zinc-800 text-xs">
-            <button
-              type="button"
-              onClick={onClose}
-              className="text-zinc-400 hover:text-zinc-200"
-            >
-              Minimize
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsEnding(true)}
-              className="px-3.5 py-1.5 bg-rose-950/70 border border-rose-800/80 text-rose-300 hover:bg-rose-900/80 rounded-xl flex items-center gap-1.5 font-medium transition cursor-pointer"
-            >
-              <Square className="w-3.5 h-3.5" />
-              <span>Conclude Tracking</span>
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};

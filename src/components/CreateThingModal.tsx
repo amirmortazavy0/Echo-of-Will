@@ -126,17 +126,7 @@ export const CreateThingModal: React.FC<CreateThingModalProps> = ({
               >
                 Private (Only You)
               </button>
-              <button
-                type="button"
-                onClick={() => setVisibility('SHARED')}
-                className={`py-2 px-3 rounded-xl border text-xs font-medium transition ${
-                  visibility === 'SHARED'
-                    ? 'bg-zinc-800 border-zinc-600 text-white'
-                    : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                Shared
-              </button>
+
             </div>
           </div>
 

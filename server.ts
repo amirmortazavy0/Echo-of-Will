@@ -1,3 +1,6 @@
+import { captureSession } from './server/capture';
+import { effectiveData } from './src/domain/evidence';
+import { validateMutation, latestEntry, effectiveEntry } from './server/commands';
 // Clean up tsx relative __dirname shim so ESM plugins like vite-plugin-pwa can resolve properly
 if (typeof (globalThis as any).__dirname !== 'undefined' && (globalThis as any).__dirname === '.') {
   delete (globalThis as any).__dirname;
@@ -7,7 +10,6 @@ import express, { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
-import { createServer as createViteServer } from 'vite';
 import { runMarkdownExport } from './server/exportService';
 import {
   readAppData,
@@ -17,6 +19,7 @@ import {
   getCurrentIso,
   DEFAULT_USER_ID,
   STORAGE_FILE,
+  getDataDir,
 } from './server/storage';
 import {
   calculateDurationVsEstimate,
@@ -31,13 +34,6 @@ import {
   answerQueryChat,
 } from './server/aiLogger';
 import { computeBoardData } from './server/boardService';
-import {
-  syncEventToSupabase,
-  syncJourneyToSupabase,
-  syncNodeToSupabase,
-  syncSessionEntryToSupabase,
-  syncSessionToSupabase,
-} from './server/supabase';
 import {
   ConflictLog,
   Correction,
@@ -59,13 +55,20 @@ import {
   loginUser,
   expressAuthMiddleware,
   AuthenticatedRequest,
+  localBoundary,
 } from './server/auth';
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
+  const HOST = process.env.HOST || '127.0.0.1';
+  if (!['127.0.0.1', '::1', 'localhost'].includes(HOST)) throw new Error('Only loopback hosting is supported in Phase 1');
+  if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+    throw new Error('PORT must be an integer between 1 and 65535');
+  }
 
-  app.use(express.json());
+  app.use(localBoundary);
+  app.use(express.json({ limit: '1mb' }));
 
   // ==========================================
   // AUTHENTICATION ENDPOINTS (Public & Me)
@@ -109,6 +112,7 @@ async function startServer() {
 
   // JWT Middleware to protect all subsequent API endpoints
   app.use(expressAuthMiddleware as any);
+  app.use(validateMutation);
 
   const handleMe = (req: Request, res: Response) => {
     const user = (req as AuthenticatedRequest).user;
@@ -145,6 +149,7 @@ async function startServer() {
       id: `jrn-${randomUUID()}`,
       name: String(name).trim(),
       description: description ? String(description).trim() : null,
+      creation_snapshot: { name: String(name).trim(), description: description ? String(description).trim() : null, provenance: 'declared_at_capture' },
       owner_id: DEFAULT_USER_ID,
       visibility: visibility === 'SHARED' ? 'SHARED' : 'PRIVATE',
       status: 'ACTIVE',
@@ -282,7 +287,7 @@ async function startServer() {
       node_type: node_type || 'TASK',
       name: String(name).trim(),
       description: description ? String(description).trim() : null,
-      status: 'PLANNED',
+      status: req.body.status || 'PLANNED',
       sequence: sequence !== undefined ? Number(sequence) : null,
       estimated_minutes:
         estimated_minutes !== undefined && estimated_minutes !== null
@@ -335,9 +340,15 @@ async function startServer() {
       return;
     }
 
-    const prevValue = { ...node };
+    const prevValue = structuredClone(node);
     const { name, description, status, node_type, done_type, due_date, parent_id, note } = req.body;
 
+    if (req.body.estimated_minutes !== undefined) {
+      const previous = node.estimated_minutes ?? null;
+      node.estimated_minutes = req.body.estimated_minutes;
+      data.node_estimate_history!.push({ id: `est-${randomUUID()}`, node_id: node.id, previous_estimated_minutes: previous, new_estimated_minutes: node.estimated_minutes, changed_at: getCurrentIso() });
+    }
+    if (req.body.sequence !== undefined) node.sequence = req.body.sequence;
     if (name !== undefined) node.name = String(name).trim();
     if (description !== undefined) node.description = description ? String(description).trim() : null;
     if (node_type !== undefined) node.node_type = node_type;
@@ -404,6 +415,7 @@ async function startServer() {
     node.status = 'COMPLETE';
     node.completed_at = getCurrentIso();
     node.note = reason;
+    data.node_closures!.push({ id: `cls-${randomUUID()}`, node_id: node.id, reason, previous_status: prevStatus, closed_at: node.completed_at });
 
     appendEvent(data, {
       entity_type: 'Node',
@@ -430,6 +442,7 @@ async function startServer() {
     const prevEstimate = node.estimated_minutes;
     const newEst = estimated_minutes !== null ? Number(estimated_minutes) : null;
     node.estimated_minutes = newEst;
+    data.node_estimate_history!.push({ id: `est-${randomUUID()}`, node_id: node.id, previous_estimated_minutes: prevEstimate ?? null, new_estimated_minutes: newEst, changed_at: getCurrentIso() });
 
     const eventType = prevEstimate === null ? 'NODE_ESTIMATE_SET' : 'NODE_ESTIMATE_REVISED';
 
@@ -450,7 +463,8 @@ async function startServer() {
   // ==========================================
 
   app.get('/api/sessions', (req: Request, res: Response) => {
-    const data = readAppData();
+    const raw = readAppData();
+    const data = req.query.view === 'effective' ? effectiveData(raw) : raw;
     const { journey_id, status } = req.query as Record<string, string | undefined>;
     let results = [...data.sessions];
 
@@ -494,7 +508,7 @@ async function startServer() {
       location: 'HOME',
       environment: 'QUIET',
     });
-    if (!condCheck.valid) {
+    if (condCheck.valid === false) {
       res.status(400).json({ detail: condCheck.error });
       return;
     }
@@ -524,6 +538,7 @@ async function startServer() {
       node_id: resolvedInitialNodeId,
       label: label ? String(label).trim() : null,
       intention: String(intention).trim(), // IMMUTABLE
+      intention_provenance: started_at ? 'reconstructed' : 'declared_at_capture',
       started_at: startIso,
       ended_at: null,
       status: 'ACTIVE',
@@ -564,6 +579,7 @@ async function startServer() {
         node_id: resolvedInitialNodeId,
         entry_type: 'TASK_STARTED',
         logged_at: startIso,
+        captured_at: nowIso, time_provenance: started_at ? 'reported' : 'observed',
         note: null,
         condition: condCheck.value,
         discovery_ref: null,
@@ -583,6 +599,7 @@ async function startServer() {
         node_id: null,
         entry_type: 'NOTE',
         logged_at: startIso,
+        captured_at: nowIso, time_provenance: started_at ? 'reported' : 'observed',
         note: 'Initial session condition recorded',
         condition: condCheck.value,
         discovery_ref: null,
@@ -621,7 +638,8 @@ async function startServer() {
   });
 
   app.get('/api/sessions/:id', (req: Request, res: Response) => {
-    const data = readAppData();
+    const raw = readAppData();
+    const data = req.query.view === 'effective' ? effectiveData(raw) : raw;
     const session = data.sessions.find((s) => s.id === req.params.id);
     if (!session) {
       res.status(404).json({ detail: 'Session not found' });
@@ -630,8 +648,17 @@ async function startServer() {
     res.json(session);
   });
 
+  app.get('/api/sessions/:id/evidence',(req:Request,res:Response)=>{
+    const raw=readAppData(), original=raw.sessions.find(s=>s.id===req.params.id);
+    if(!original){res.status(404).json({detail:'Session not found'});return;}
+    const effective=effectiveData(raw), entries=raw.entries.filter(e=>e.session_id===original.id);
+    res.json({original_session:original,effective_session:effective.sessions.find(s=>s.id===original.id),original_entries:entries,
+      reports:(raw.capture_reports||[]).filter(r=>r.session_id===original.id),revisions:(raw.intention_revisions||[]).filter(r=>r.session_id===original.id),
+      corrections:raw.corrections.filter(c=>entries.some(e=>e.id===c.entry_id)),amendments:(raw.session_amendments||[]).filter(a=>a.session_id===original.id),conflicts:raw.conflicts.filter(c=>c.session_id===original.id)});
+  });
+
   app.get('/api/sessions/:id/summary', (req: Request, res: Response) => {
-    const data = readAppData();
+    const data = effectiveData(readAppData());
     const session = data.sessions.find((s) => s.id === req.params.id);
     if (!session) {
       res.status(404).json({ detail: 'Session not found' });
@@ -656,13 +683,13 @@ async function startServer() {
     const { reflection, quality, status, note, end_reason, successor_session_id } = req.body;
 
     const endReasonCheck = validateSessionEndReason(end_reason, 'NATURAL_COMPLETION');
-    if (!endReasonCheck.valid) {
+    if (endReasonCheck.valid === false) {
       res.status(400).json({ detail: endReasonCheck.error });
       return;
     }
 
     const qualityCheck = validateSessionQuality(quality);
-    if (!qualityCheck.valid) {
+    if (qualityCheck.valid === false) {
       res.status(400).json({ detail: qualityCheck.error });
       return;
     }
@@ -670,18 +697,18 @@ async function startServer() {
     const derivedStatus = deriveSessionStatusFromEndReason(endReasonCheck.value, status);
 
     const prevValue = { ...session };
-    session.ended_at = nowIso;
+    session.updated_at = nowIso;
+    session.ended_at = req.body.ended_at ? toCanonicalIso(req.body.ended_at) : nowIso;
     session.status = derivedStatus;
     session.end_reason = endReasonCheck.value;
     if (successor_session_id !== undefined) session.successor_session_id = successor_session_id || null;
     session.reflection = reflection ? String(reflection).trim() : null;
     session.quality = qualityCheck.value;
     if (note !== undefined) session.note = note ? String(note).trim() : null;
-    session.updated_at = nowIso;
+    if (!session.ended_at) session.updated_at = nowIso;
 
     let eventType = 'SESSION_COMPLETED';
     if (derivedStatus === 'INCOMPLETE') eventType = 'SESSION_MARKED_INCOMPLETE';
-    else if (derivedStatus === 'ABANDONED') eventType = 'SESSION_ABANDONED';
     else if (derivedStatus === 'PAUSED') eventType = 'SESSION_PAUSED';
 
     appendEvent(data, {
@@ -719,7 +746,7 @@ async function startServer() {
     }
 
     const sessionEntries = data.entries.filter((e) => e.session_id === session.id);
-    const lastEntry = sessionEntries[sessionEntries.length - 1];
+    const lastEntry = latestEntry(data, session.id, req.body.logged_at || nowIso);
     const fallbackCond = lastEntry?.condition || {
       energy: 'MEDIUM',
       focus: 'NORMAL',
@@ -728,7 +755,7 @@ async function startServer() {
     };
 
     const condCheck = validateCondition(req.body.condition || req.body, fallbackCond);
-    if (!condCheck.valid) {
+    if (condCheck.valid === false) {
       res.status(400).json({ detail: condCheck.error });
       return;
     }
@@ -747,8 +774,9 @@ async function startServer() {
       id: `ent-${randomUUID()}`,
       session_id: session.id,
       node_id: activeNodeId,
-      entry_type: 'NOTE',
-      logged_at: nowIso,
+      entry_type: 'CONDITION_CHANGED',
+      logged_at: req.body.logged_at || nowIso,
+      captured_at: nowIso, time_provenance: req.body.logged_at ? 'reported' : 'observed',
       note: noteText,
       condition: newCond,
       discovery_ref: null,
@@ -764,7 +792,7 @@ async function startServer() {
       previous_value: lastEntry ? lastEntry.condition : null,
     });
 
-    session.updated_at = nowIso;
+    if (!session.ended_at) session.updated_at = nowIso;
     writeAppData(data);
 
     res.status(201).json({ session, entry, condition: newCond });
@@ -804,7 +832,7 @@ async function startServer() {
 
     // Sticky condition from source session
     const sourceEntries = data.entries.filter((e) => e.session_id === sourceSession.id);
-    const lastSourceEntry = sourceEntries[sourceEntries.length - 1];
+    const lastSourceEntry = latestEntry(data, sourceSession.id, nowIso);
     const defaultCondition = {
       energy: 'MEDIUM' as const,
       focus: 'NORMAL' as const,
@@ -871,6 +899,7 @@ async function startServer() {
       journey_id: target_journey_id,
       label: `Continued from ${sourceJourneyName}`,
       intention: String(new_intention).trim(),
+      intention_provenance: 'declared_at_capture',
       started_at: nowIso,
       ended_at: null,
       status: 'ACTIVE',
@@ -899,6 +928,11 @@ async function startServer() {
       payload: { intention: newSession.intention },
     });
 
+    if (!target_node_id) {
+      const carry: SessionEntry = { id: `ent-${randomUUID()}`, session_id: newSession.id, node_id: null, entry_type: 'CONDITION_CHANGED', logged_at: nowIso, condition: structuredClone(effectiveCondition), note: 'Condition carried from predecessor Session' };
+      data.entries.push(carry);
+      appendEvent(data, { entity_type: 'SessionEntry', entity_id: carry.id, event_type: 'ENTRY_LOGGED', payload: carry });
+    }
     // 4. Preserve predecessor/successor link
     appendEvent(data, {
       entity_type: 'Session',
@@ -982,7 +1016,8 @@ async function startServer() {
       session_id: session.id,
       node_id: null,
       entry_type: 'INTENTION_REVISED',
-      logged_at: nowIso,
+      logged_at: req.body.logged_at || nowIso,
+      captured_at: nowIso, time_provenance: req.body.logged_at ? 'reported' : 'observed',
       note: reason ? `${cleanNewIntention} (Reason: ${reason})` : cleanNewIntention,
       condition: condition || {
         energy: 'MEDIUM',
@@ -994,6 +1029,10 @@ async function startServer() {
 
     data.entries.push(entry);
 
+    if (session.ended_at) appendEvent(data, { entity_type: 'Session', entity_id: session.id, event_type: 'RETROSPECTIVE_REVISION_ADDED', payload: { entry_id: entry.id, reason: req.body.amendment_reason, captured_at: nowIso } });
+    const revisions = data.intention_revisions!;
+    const prior = revisions.filter(r => r.session_id === session.id).at(-1)?.new_intention || session.intention;
+    revisions.push({ id: `rev-${randomUUID()}`, session_id: session.id, entry_id: entry.id, previous_intention: prior, new_intention: cleanNewIntention, reason: reason || null, revised_at: entry.logged_at });
     // Append event: SESSION_INTENTION_REVISED
     appendEvent(data, {
       entity_type: 'Session',
@@ -1005,10 +1044,10 @@ async function startServer() {
         reason: reason || null,
         entry_id: entry.id,
       },
-      previous_value: { intention: session.intention },
+      previous_value: { intention: prior },
     });
 
-    session.updated_at = nowIso;
+    if (!session.ended_at) session.updated_at = nowIso;
     writeAppData(data);
 
     res.json({ session, entry });
@@ -1018,8 +1057,9 @@ async function startServer() {
   // SESSION ENTRIES (The moment of the tap)
   // ==========================================
 
-  app.get('/api/entries', (_req: Request, res: Response) => {
-    const data = readAppData();
+  app.get('/api/entries', (req: Request, res: Response) => {
+    const raw = readAppData();
+    const data = req.query.view === 'effective' ? effectiveData(raw) : raw;
     const entries = (data.session_entries || data.entries || []).sort(
       (a, b) => new Date(b.logged_at).getTime() - new Date(a.logged_at).getTime()
     );
@@ -1027,7 +1067,8 @@ async function startServer() {
   });
 
   app.get('/api/sessions/:session_id/entries', (req: Request, res: Response) => {
-    const data = readAppData();
+    const raw = readAppData();
+    const data = req.query.view === 'effective' ? effectiveData(raw) : raw;
     const entries = data.entries
       .filter((e) => e.session_id === req.params.session_id)
       .sort((a, b) => new Date(a.logged_at).getTime() - new Date(b.logged_at).getTime());
@@ -1112,14 +1153,14 @@ async function startServer() {
     };
 
     const sessionEntries = data.entries.filter((e) => e.session_id === sessionId);
-    const lastEntry = sessionEntries[sessionEntries.length - 1];
+    const lastEntry = latestEntry(data, session.id, req.body.logged_at || nowIso);
 
     // Sticky condition: carry forward from previous entry unless modified, and validate
     const condCheck = validateCondition(
       condition,
       lastEntry ? lastEntry.condition : defaultCondition
     );
-    if (!condCheck.valid) {
+    if (condCheck.valid === false) {
       res.status(400).json({ detail: condCheck.error });
       return;
     }
@@ -1131,7 +1172,8 @@ async function startServer() {
       session_id: sessionId,
       node_id: node_id || null,
       entry_type,
-      logged_at: nowIso,
+      logged_at: req.body.logged_at || nowIso,
+      captured_at: nowIso, time_provenance: req.body.logged_at ? 'reported' : 'observed',
       note: note ? String(note).trim() : null,
       condition: effectiveCondition,
       discovery_ref: discoveryRef,
@@ -1146,6 +1188,7 @@ async function startServer() {
       payload: entry,
     });
 
+    if (session.ended_at) appendEvent(data, { entity_type: 'SessionEntry', entity_id: entry.id, event_type: 'RETROSPECTIVE_ENTRY_ADDED', payload: { entry_id: entry.id, reason: req.body.amendment_reason, captured_at: nowIso } });
     // Check if condition changed from last entry
     if (
       lastEntry &&
@@ -1177,6 +1220,7 @@ async function startServer() {
             previous_value: { status: 'PLANNED' },
           });
         } else if (entry_type === 'TASK_COMPLETED' && targetNode.status !== 'COMPLETE') {
+          const previousStatus = targetNode.status;
           targetNode.status = 'COMPLETE';
           targetNode.completed_at = nowIso;
           appendEvent(data, {
@@ -1184,7 +1228,7 @@ async function startServer() {
             entity_id: targetNode.id,
             event_type: 'NODE_STATUS_CHANGED',
             payload: { status: 'COMPLETE', completed_at: nowIso },
-            previous_value: { status: targetNode.status },
+            previous_value: { status: previousStatus },
           });
         } else if (entry_type === 'TASK_PAUSED' && targetNode.status === 'ACTIVE') {
           targetNode.status = 'PAUSED';
@@ -1199,7 +1243,7 @@ async function startServer() {
       }
     }
 
-    session.updated_at = nowIso;
+    if (!session.ended_at) session.updated_at = nowIso;
     writeAppData(data);
 
     res.status(201).json({
@@ -1211,6 +1255,17 @@ async function startServer() {
   // ==========================================
   // CORRECTIONS (Historical Integrity)
   // ==========================================
+
+  app.post('/api/sessions/:id/amend', (req: Request, res: Response) => {
+    const data = readAppData();
+    const session = data.sessions.find(s => s.id === req.params.id)!;
+    const { field, value, reason } = req.body;
+    const prior = data.session_amendments!.filter(a => a.session_id === session.id && a.field === field).at(-1)?.value ?? (session as any)[field] ?? null;
+    const amendment = { id: `amd-${randomUUID()}`, session_id: session.id, field, value, reason, original_value: (session as any)[field] ?? null, previous_value: prior, actor_id: DEFAULT_USER_ID, created_at: getCurrentIso() };
+    data.session_amendments!.push(amendment);
+    appendEvent(data, { entity_type: 'Session', entity_id: session.id, event_type: 'SESSION_AMENDED', payload: amendment, previous_value: { [field]: prior } });
+    writeAppData(data); res.status(201).json(amendment);
+  });
 
   app.get('/api/corrections', (req: Request, res: Response) => {
     const data = readAppData();
@@ -1239,6 +1294,8 @@ async function startServer() {
       return;
     }
 
+    const effective = effectiveEntry(data, entry);
+    const previousEffective = String((effective as any)[field] ?? '');
     let originalVal = '';
     if (field === 'logged_at') originalVal = entry.logged_at;
     else if (field === 'note') originalVal = entry.note || '';
@@ -1250,7 +1307,10 @@ async function startServer() {
       entry_id: entryId,
       field,
       original_value: String(originalVal),
-      corrected_value: String(corrected_value),
+      corrected_value: String(corrected_value ?? ''),
+      previous_value: previousEffective,
+      actor_id: DEFAULT_USER_ID,
+      sequence: Math.max(0, ...data.corrections.map(c => c.sequence || 0)) + 1,
       reason: reason ? String(reason).trim() : null,
       created_at: nowIso,
     };
@@ -1262,6 +1322,7 @@ async function startServer() {
       entity_id: entryId,
       event_type: 'ENTRY_CORRECTED',
       payload: correction,
+      previous_value: { [field]: previousEffective },
     });
 
     writeAppData(data);
@@ -1320,7 +1381,7 @@ async function startServer() {
 
   // Query 1: Actual duration vs estimate
   app.get('/api/queries/duration-vs-estimate', (req: Request, res: Response) => {
-    const data = readAppData();
+    const data = effectiveData(readAppData());
     const journeyId = req.query.journey_id as string | undefined;
     const nodeId = req.query.node_id as string | undefined;
     const results = calculateDurationVsEstimate(data, journeyId, nodeId);
@@ -1340,7 +1401,7 @@ async function startServer() {
   });
 
   app.get('/api/queries/journey-progress/:journey_id', (req: Request, res: Response) => {
-    const data = readAppData();
+    const data = effectiveData(readAppData());
     const journeyId = req.params.journey_id;
     const result = calculateJourneyProgress(data, journeyId);
     res.json(result);
@@ -1389,7 +1450,7 @@ async function startServer() {
       res.json({
         status: 'offline',
         url: 'http://localhost:11434',
-        model: 'phi3:mini',
+        model: '',
         available_models: [],
         provider: 'manual',
       });
@@ -1399,7 +1460,8 @@ async function startServer() {
   // Update Ollama configuration
   app.post('/api/ai/settings', (req: Request, res: Response) => {
     const { url, model } = req.body;
-    const config = setOllamaConfig(url, model);
+    let config;
+    try { config = setOllamaConfig(url, model); } catch (error: any) { res.status(400).json({ detail: error.message }); return; }
     res.json(config);
   });
 
@@ -1411,7 +1473,7 @@ async function startServer() {
       return;
     }
 
-    const data = readAppData();
+    const data = effectiveData(readAppData());
     try {
       const entries = data.session_entries || data.entries || [];
       const response = await answerQueryChat(
@@ -1433,244 +1495,7 @@ async function startServer() {
   });
 
   // One-tap quick log commit
-  app.post('/api/sessions/quick-log', (req: Request, res: Response) => {
-    const data = readAppData();
-    const now = new Date();
-    const nowIso = now.toISOString();
-
-    const {
-      journey_id,
-      node_id,
-      node_name,
-      node_status = 'ACTIVE',
-      work_type = 'DEVELOPMENT',
-      duration_minutes = 60,
-      intention,
-      condition,
-    } = req.body;
-
-    if (!intention || !String(intention).trim()) {
-      res.status(400).json({ detail: 'Session intention is required' });
-      return;
-    }
-
-    // 1. Locate or select journey
-    let journey = data.journeys.find((j) => j.id === journey_id);
-    if (!journey) {
-      journey = data.journeys.find((j) => j.status === 'ACTIVE') || data.journeys[0];
-    }
-    if (!journey) {
-      journey = {
-        id: `jrn-${randomUUID()}`,
-        name: 'Daily Execution',
-        owner_id: DEFAULT_USER_ID,
-        visibility: 'PRIVATE',
-        status: 'ACTIVE',
-        created_at: nowIso,
-        completed_at: null,
-      };
-      data.journeys.push(journey);
-      appendEvent(data, {
-        entity_type: 'Journey',
-        entity_id: journey.id,
-        event_type: 'JOURNEY_CREATED',
-        payload: journey,
-      });
-      syncJourneyToSupabase(journey);
-    }
-
-    // 2. Locate or create Node
-    let node: Node | undefined;
-    if (node_id) {
-      node = data.nodes.find((n) => n.id === node_id);
-    }
-
-    if (!node && node_name) {
-      const cleanName = String(node_name).trim();
-      node = data.nodes.find(
-        (n) => n.journey_id === journey!.id && n.name.toLowerCase() === cleanName.toLowerCase()
-      );
-
-      if (!node) {
-        node = {
-          id: `nod-${randomUUID()}`,
-          journey_id: journey.id,
-          name: cleanName,
-          node_type: 'TASK',
-          status: node_status === 'COMPLETE' ? 'COMPLETE' : 'ACTIVE',
-          created_at: nowIso,
-          completed_at: node_status === 'COMPLETE' ? nowIso : null,
-        };
-        data.nodes.push(node);
-        appendEvent(data, {
-          entity_type: 'Node',
-          entity_id: node.id,
-          event_type: 'NODE_CREATED',
-          payload: node,
-        });
-        syncNodeToSupabase(node);
-      }
-    }
-
-    // If node exists and node_status is specified to COMPLETE
-    if (node && node_status === 'COMPLETE' && node.status !== 'COMPLETE') {
-      const prevStatus = node.status;
-      node.status = 'COMPLETE';
-      node.completed_at = nowIso;
-      appendEvent(data, {
-        entity_type: 'Node',
-        entity_id: node.id,
-        event_type: 'NODE_STATUS_CHANGED',
-        payload: { node_id: node.id, previous_status: prevStatus, new_status: 'COMPLETE' },
-      });
-      syncNodeToSupabase(node);
-    } else if (node && node_status === 'ACTIVE' && node.status === 'PLANNED') {
-      node.status = 'ACTIVE';
-      appendEvent(data, {
-        entity_type: 'Node',
-        entity_id: node.id,
-        event_type: 'NODE_STATUS_CHANGED',
-        payload: { node_id: node.id, previous_status: 'PLANNED', new_status: 'ACTIVE' },
-      });
-      syncNodeToSupabase(node);
-    }
-
-    // Validate Condition, Quality, and End Reason before persisting
-    const condCheck = validateCondition(condition);
-    if (!condCheck.valid) {
-      res.status(400).json({ detail: condCheck.error });
-      return;
-    }
-    const qualityCheck = validateSessionQuality(req.body.quality);
-    if (!qualityCheck.valid) {
-      res.status(400).json({ detail: qualityCheck.error });
-      return;
-    }
-    const endReasonCheck = validateSessionEndReason(req.body.end_reason, 'NATURAL_COMPLETION');
-    if (!endReasonCheck.valid) {
-      res.status(400).json({ detail: endReasonCheck.error });
-      return;
-    }
-
-    // 3. Compute timestamps: started_at = end - duration_minutes (or custom timestamps if provided)
-    const durMins = Math.max(1, Number(duration_minutes) || 60);
-    let endIso = nowIso;
-    let startIso = new Date(now.getTime() - durMins * 60 * 1000).toISOString();
-    try {
-      if (req.body.ended_at) {
-        endIso = toCanonicalIso(req.body.ended_at);
-      }
-      const endDate = new Date(endIso);
-      startIso = req.body.started_at
-        ? toCanonicalIso(req.body.started_at)
-        : new Date(endDate.getTime() - durMins * 60 * 1000).toISOString();
-    } catch (err: any) {
-      res.status(400).json({ detail: err.message });
-      return;
-    }
-
-    const derivedStatus = deriveSessionStatusFromEndReason(
-      endReasonCheck.value,
-      req.body.status
-    );
-
-    // 4. Create Session (Intention is locked and immutable)
-    const session: Session = {
-      id: `ses-${randomUUID()}`,
-      journey_id: journey.id,
-      node_id: node ? node.id : null,
-      label: `${work_type} Session`,
-      intention: String(intention).trim(),
-      started_at: startIso,
-      ended_at: endIso,
-      status: derivedStatus,
-      end_reason: endReasonCheck.value,
-      predecessor_session_id: null,
-      successor_session_id: null,
-      reflection: req.body.reflection ? String(req.body.reflection).trim() : null,
-      quality: qualityCheck.value,
-      note: req.body.note || `Logged work: ${intention}`,
-      created_at: nowIso,
-      updated_at: nowIso,
-    };
-    data.sessions.push(session);
-
-    appendEvent(data, {
-      entity_type: 'Session',
-      entity_id: session.id,
-      event_type: 'SESSION_STARTED',
-      payload: session,
-    });
-    appendEvent(data, {
-      entity_type: 'Session',
-      entity_id: session.id,
-      event_type: 'SESSION_INTENTION_LOCKED',
-      payload: { session_id: session.id, intention: session.intention },
-    });
-
-    // 5. Create paired Session Entries (start boundary at startIso + end boundary at endIso)
-    const startEntry: SessionEntry = {
-      id: `ent-${randomUUID()}`,
-      session_id: session.id,
-      node_id: node ? node.id : null,
-      entry_type: 'TASK_STARTED',
-      logged_at: startIso,
-      note: `${session.intention} (${durMins} min)`,
-      condition: condCheck.value,
-    };
-    const endEntry: SessionEntry = {
-      id: `ent-${randomUUID()}`,
-      session_id: session.id,
-      node_id: node ? node.id : null,
-      entry_type: node_status === 'COMPLETE' ? 'TASK_COMPLETED' : 'TASK_PAUSED',
-      logged_at: endIso,
-      note: `${session.intention} (${durMins} min)`,
-      condition: condCheck.value,
-    };
-    data.entries.push(startEntry, endEntry);
-
-    appendEvent(data, {
-      entity_type: 'SessionEntry',
-      entity_id: startEntry.id,
-      event_type: 'ENTRY_LOGGED',
-      payload: startEntry,
-    });
-    appendEvent(data, {
-      entity_type: 'SessionEntry',
-      entity_id: endEntry.id,
-      event_type: 'ENTRY_LOGGED',
-      payload: endEntry,
-    });
-
-    appendEvent(data, {
-      entity_type: 'Session',
-      entity_id: session.id,
-      event_type: 'SESSION_COMPLETED',
-      payload: {
-        session_id: session.id,
-        end_reason: endReasonCheck.value,
-        duration_minutes: durMins,
-      },
-    });
-
-    writeAppData(data);
-
-    // Sync to Supabase in background
-    syncSessionToSupabase(session);
-    syncSessionEntryToSupabase(startEntry);
-    syncSessionEntryToSupabase(endEntry);
-
-    const board = computeBoardData(data, journey.id);
-
-    res.status(201).json({
-      success: true,
-      session,
-      node,
-      entry: endEntry,
-      entries: [startEntry, endEntry],
-      board,
-    });
-  });
+  app.post('/api/sessions/quick-log', captureSession);
 
   // ==========================================
   // EVENT LOG & EXPORT
@@ -1684,39 +1509,17 @@ async function startServer() {
     res.json(events);
   });
 
-  app.get('/api/export', (_req: Request, res: Response) => {
-    res.download(STORAGE_FILE, 'pist_data.json');
+  app.get(['/api/export','/api/export/json'], (_req:Request,res:Response)=>{res.attachment('pist_data.json').json(readAppData());});
+  app.post('/api/export/markdown', (_req:Request,res:Response)=>{
+    const result=runMarkdownExport();
+    res.json({success:true,zip_url:'/api/export/download?id='+result.exportId});
   });
-
-  app.get('/api/export/json', (_req: Request, res: Response) => {
-    res.download(STORAGE_FILE, 'pist_data.json');
-  });
-
-  // Markdown Obsidian / AI-ingestible Export as specified in Master Build Prompt
-  app.post('/api/export/markdown', (_req: Request, res: Response) => {
-    try {
-      const exportDir = path.resolve(process.cwd(), 'export');
-      const result = runMarkdownExport(exportDir);
-      console.log('[Export Completed] Generated markdown export to', result.exportDir);
-      res.json({
-        success: true,
-        message: 'Markdown export completed successfully',
-        export_dir: result.exportDir,
-        zip_url: '/api/export/download',
-      });
-    } catch (error: any) {
-      console.error('[Export Error]', error);
-      res.status(500).json({ detail: 'Export generation failed', error: String(error) });
-    }
-  });
-
-  app.get('/api/export/download', (_req: Request, res: Response) => {
-    const zipPath = path.resolve(process.cwd(), 'export', 'human_drift_export.zip');
-    if (fs.existsSync(zipPath)) {
-      res.download(zipPath, 'human_drift_markdown_export.zip');
-    } else {
-      res.status(404).json({ detail: 'Export zip not generated yet. Trigger export first.' });
-    }
+  app.get('/api/export/download', (req:Request,res:Response)=>{
+    const id=String(req.query.id||'');
+    if(!/^[0-9a-f-]{36}$/.test(id)){res.status(400).json({detail:'A generated snapshot ID is required'});return;}
+    const zip=path.join(getDataDir(),'exports',id,'human_drift_export.zip');
+    if(!fs.existsSync(zip)){res.status(404).json({detail:'Snapshot not found'});return;}
+    res.download(zip,'human_drift_markdown_export.zip');
   });
 
   app.get(['/health', '/api/health'], (_req: Request, res: Response) => {
@@ -1732,11 +1535,16 @@ async function startServer() {
     });
   });
 
+  app.use((error: any, _req: Request, res: Response, _next: any) => {
+    res.status(error.status || 500).json({ detail: error.status ? error.message : 'Local operation failed; no successful save was reported' });
+  });
+
   // ==========================================
   // VITE DEV MIDDLEWARE / SPA STATIC FALLBACK
   // ==========================================
 
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
@@ -1753,9 +1561,12 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Human Drift R&D Work Logger running on http://0.0.0.0:${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`Echo of Will running on http://${HOST}:${PORT} (${process.env.NODE_ENV || 'development'})`);
   });
 }
 
-startServer();
+startServer().catch((error) => {
+  console.error('Startup failed:', error);
+  process.exitCode = 1;
+});

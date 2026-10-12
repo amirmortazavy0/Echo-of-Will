@@ -2,10 +2,12 @@
 // AUTHORITATIVE DOMAIN MODEL v1 — HUMAN DRIFT
 // ==========================================
 
-export type Visibility = 'PRIVATE' | 'SHARED';
+export type Visibility = 'PRIVATE' | 'SHARED' | 'PUBLIC';
+export interface Custody { owner_id?: string; visibility?: Visibility; migration_provenance?: { source_sha256: string; defaulted_fields: string[] }; }
 export type JourneyStatus = 'ACTIVE' | 'PAUSED' | 'COMPLETE';
 
-export interface Journey {
+export interface Journey extends Custody {
+  creation_snapshot?: { name?: string; description?: string | null; intention?: string | null; provenance: string };
   id: string;
   name: string;
   description?: string | null;
@@ -21,7 +23,7 @@ export type NodeType = 'ROUTE' | 'STATION' | 'PROJECT' | 'TASK' | 'MILESTONE' | 
 export type NodeStatus = 'PLANNED' | 'ACTIVE' | 'PAUSED' | 'DORMANT' | 'COMPLETE';
 export type DoneType = 'DELIVERABLE' | 'TIME_TARGET' | 'MILESTONE_SEQUENCE' | 'OPEN_ENDED';
 
-export interface Node {
+export interface Node extends Custody {
   id: string;
   journey_id: string;
   parent_id?: string | null;
@@ -43,10 +45,9 @@ export const VALID_SESSION_STATUSES = [
   'ACTIVE',
   'COMPLETE',
   'INCOMPLETE',
-  'ABANDONED',
   'PAUSED',
 ] as const;
-export type SessionStatus = (typeof VALID_SESSION_STATUSES)[number];
+export type SessionStatus = (typeof VALID_SESSION_STATUSES)[number] | 'ABANDONED'; // Read-only legacy compatibility.
 
 // Authoritative Session Quality values per Domain Model v1
 export const VALID_SESSION_QUALITIES = ['POOR', 'FAIR', 'GOOD', 'EXCELLENT'] as const;
@@ -64,7 +65,8 @@ export const VALID_SESSION_END_REASONS = [
 ] as const;
 export type SessionEndReason = (typeof VALID_SESSION_END_REASONS)[number];
 
-export interface Session {
+export interface Session extends Custody {
+  intention_provenance?: 'declared_at_capture' | 'reconstructed' | 'legacy_unknown';
   id: string;
   journey_id: string;
   node_id?: string | null;
@@ -95,22 +97,25 @@ export const VALID_ENTRY_TYPES = [
   'STOP_DEPARTED',
   'STOP_ARRIVED',
   'NOTE',
+  'CONDITION_CHANGED',
 ] as const;
 export type EntryType = (typeof VALID_ENTRY_TYPES)[number];
 
-export const VALID_ENERGY_LEVELS = ['LOW', 'MEDIUM', 'HIGH'] as const;
+export const VALID_ENERGY_LEVELS = ['LOW', 'MEDIUM', 'HIGH', 'UNKNOWN'] as const;
 export type EnergyLevel = (typeof VALID_ENERGY_LEVELS)[number];
 
-export const VALID_FOCUS_LEVELS = ['SCATTERED', 'NORMAL', 'DEEP'] as const;
+export const VALID_FOCUS_LEVELS = ['SCATTERED', 'NORMAL', 'DEEP', 'UNKNOWN'] as const;
 export type FocusLevel = (typeof VALID_FOCUS_LEVELS)[number];
 
-export const VALID_LOCATION_TYPES = ['HOME', 'CAFE', 'OFFICE', 'TRANSIT', 'OTHER'] as const;
+export const VALID_LOCATION_TYPES = ['HOME', 'CAFE', 'OFFICE', 'TRANSIT', 'OTHER', 'UNKNOWN'] as const;
 export type LocationType = (typeof VALID_LOCATION_TYPES)[number];
 
-export const VALID_ENVIRONMENT_TYPES = ['QUIET', 'AMBIENT', 'NOISY'] as const;
+export const VALID_ENVIRONMENT_TYPES = ['QUIET', 'AMBIENT', 'NOISY', 'UNKNOWN'] as const;
 export type EnvironmentType = (typeof VALID_ENVIRONMENT_TYPES)[number];
 
-export interface Condition {
+export interface Condition extends Custody {
+  provenance?: 'reported' | 'inherited' | 'unknown' | 'legacy_unknown';
+  inherited_from_entry_id?: string | null;
   energy: EnergyLevel;
   focus: FocusLevel;
   location: LocationType;
@@ -118,7 +123,10 @@ export interface Condition {
   custom_note?: string | null;
 }
 
-export interface SessionEntry {
+export interface SessionEntry extends Custody {
+  source_report_id?: string;
+  captured_at?: string;
+  time_provenance?: 'observed' | 'reported' | 'estimated';
   id: string;
   session_id: string;
   node_id?: string | null;
@@ -129,7 +137,8 @@ export interface SessionEntry {
   discovery_ref?: string | null;
 }
 
-export interface AuditLogEntry {
+export interface AuditLogEntry extends Custody {
+  actor_id?: string;
   id: string;
   timestamp: string;
   entity_type: 'JOURNEY' | 'NODE' | 'SESSION' | 'SESSIONENTRY' | 'CORRECTION' | 'CONFLICT';
@@ -139,7 +148,7 @@ export interface AuditLogEntry {
   previous_value?: any;
 }
 
-export interface EventLogEntry {
+export interface EventLogEntry extends Custody {
   id: string;
   entity_type: 'Journey' | 'Node' | 'Session' | 'SessionEntry';
   entity_id: string;
@@ -150,7 +159,10 @@ export interface EventLogEntry {
   occurred_at: string;
 }
 
-export interface Correction {
+export interface Correction extends Custody {
+  actor_id?: string;
+  previous_value?: string;
+  sequence?: number;
   id: string;
   entry_id: string;
   field: string;
@@ -169,7 +181,7 @@ export type ConflictType =
   | 'DUPLICATE_SESSION'
   | 'OTHER';
 
-export interface ConflictLog {
+export interface ConflictLog extends Custody {
   id: string;
   session_id: string;
   conflict_type: ConflictType;
@@ -180,7 +192,7 @@ export interface ConflictLog {
   resolved_at?: string | null;
 }
 
-export interface IntentionRevision {
+export interface IntentionRevision extends Custody {
   id: string;
   session_id: string;
   entry_id: string;
@@ -190,7 +202,7 @@ export interface IntentionRevision {
   revised_at: string;
 }
 
-export interface NodeEstimateHistory {
+export interface NodeEstimateHistory extends Custody {
   id: string;
   node_id: string;
   previous_estimated_minutes: number | null;
@@ -198,7 +210,7 @@ export interface NodeEstimateHistory {
   changed_at: string;
 }
 
-export interface NodeClosure {
+export interface NodeClosure extends Custody {
   id: string;
   node_id: string;
   reason: string;
@@ -207,6 +219,10 @@ export interface NodeClosure {
 }
 
 export interface AppData {
+  capture_reports?: CaptureReport[];
+  schema_version?: number;
+  session_amendments?: any[];
+  migrations?: any[];
   journeys: Journey[];
   nodes: Node[];
   sessions: Session[];
@@ -242,11 +258,17 @@ export interface ParsedLogProposal {
   entry_types?: EntryType[];
   condition: Condition;
   confidence?: 'HIGH' | 'MEDIUM' | 'LOW';
-  provider: 'ollama' | 'gemini' | 'heuristic' | 'local_heuristic';
+  provider: 'ollama' | 'heuristic' | 'local_heuristic';
   reasoning?: string;
 }
 
 export interface QuickLogPayload {
+  original_report?: string;
+  provider?: 'manual' | 'ollama' | 'heuristic' | 'local_heuristic';
+  proposal?: unknown;
+  uncertainty?: string;
+  boundaries_confirmed?: boolean;
+  reviewed_entries?: { entry_type:'NOTE'|'DISCOVERY'|'INTENTION_REVISED'; note?:string; logged_at?:string; node_id?:string|null; discovery_node?:{name:string;description?:string;parent_id?:string|null}; new_intention?:string; reason?:string }[];
   journey_id?: string;
   node_id?: string | null;
   node_name?: string;
@@ -262,6 +284,12 @@ export interface QuickLogPayload {
   reflection?: string | null;
   note?: string | null;
   entry_types?: EntryType[];
+}
+
+export interface CaptureReport extends Custody {
+  id:string; session_id:string; original_text:string; captured_at:string; confirmed_at:string;
+  provider:string; proposal:unknown; uncertainty:string|null; claimed_started_at:string; claimed_ended_at:string;
+  boundaries_confirmed:boolean; accepted_entries:unknown[];
 }
 
 export interface QuickLogResponse {
@@ -334,7 +362,7 @@ export interface OllamaStatus {
 
 export interface QueryChatResponse {
   answer: string;
-  provider: 'ollama' | 'gemini' | 'deterministic' | 'manual';
+  provider: 'ollama' | 'deterministic' | 'manual';
   sessions_analyzed: number;
 }
 

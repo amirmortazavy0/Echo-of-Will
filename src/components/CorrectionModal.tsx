@@ -99,7 +99,7 @@ export const CorrectionModal: React.FC<CorrectionModalProps> = ({ entry, onClose
           </div>
 
           <div className="p-3 bg-stone-50 rounded-lg border border-stone-200 text-xs text-stone-600">
-            <span className="font-semibold text-stone-700">Original Value: </span>
+            <span className="font-semibold text-stone-700">Current effective value (original preserved): </span>
             <span className="font-mono">{getOriginalValue()}</span>
           </div>
 
