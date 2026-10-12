@@ -531,8 +531,7 @@ export function deriveSessionStatusFromEndReason(
   if (
     explicitStatus === 'COMPLETE' ||
     explicitStatus === 'INCOMPLETE' ||
-    explicitStatus === 'PAUSED' ||
-    explicitStatus === 'ABANDONED'
+    explicitStatus === 'PAUSED'
   ) {
     return explicitStatus;
   }
@@ -623,6 +622,8 @@ export function validateCondition(
   return {
     valid: true,
     value: {
+      ...fallback,
+      ...raw,
       energy: energy as EnergyLevel,
       focus: focus as FocusLevel,
       location: location as LocationType,

@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { interpretSession } from '../src/domain/evidence';
 import {
   Condition,
   EnergyLevel,
@@ -17,28 +17,31 @@ import {
 import { formatLocalDateKey, formatSessionStatus } from '../src/utils/formatters';
 
 // Ollama Configuration
-let currentOllamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
-let currentOllamaModel = process.env.OLLAMA_MODEL || 'phi3:mini';
+let currentOllamaUrl = localOllamaUrl(process.env.OLLAMA_URL || 'http://127.0.0.1:11434');
+let currentOllamaModel = process.env.OLLAMA_MODEL || ''; // Manual mode until a local model is selected.
 
 export function getOllamaConfig() {
   return { url: currentOllamaUrl, model: currentOllamaModel };
 }
 
 export function setOllamaConfig(url?: string, model?: string) {
-  if (url) currentOllamaUrl = url.replace(/\/+$/, '');
-  if (model) currentOllamaModel = model.trim();
+  const nextUrl = url === undefined ? currentOllamaUrl : localOllamaUrl(url);
+  if (model !== undefined && (typeof model !== 'string' || model.length > 200)) throw new Error('Invalid local model name');
+  currentOllamaUrl = nextUrl;
+  if (model !== undefined) currentOllamaModel = model.trim();
   return getOllamaConfig();
 }
 
 // Check Ollama Health
 export async function checkOllamaHealth(url: string = currentOllamaUrl): Promise<OllamaStatus> {
-  const cleanUrl = url.replace(/\/+$/, '');
+  const cleanUrl = localOllamaUrl(url);
+  if (!currentOllamaModel) return { status: 'offline', url: cleanUrl, model: '', available_models: [], provider: 'manual' };
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 2000);
     const resp = await fetch(`${cleanUrl}/api/tags`, {
       method: 'GET',
-      signal: controller.signal,
+      signal: controller.signal, redirect: 'error',
     });
     clearTimeout(timeout);
 
@@ -227,7 +230,7 @@ export function fallbackLocalParse(
   };
 }
 
-// Primary Log Parser: Ollama -> Gemini -> Local Heuristic
+// Primary Log Parser: Optional local Ollama -> Local Heuristic
 export async function parseNaturalLanguageLog(
   message: string,
   journeys: Journey[],
@@ -242,7 +245,7 @@ export async function parseNaturalLanguageLog(
   const journeyNodes = nodes.filter((n) => n.journey_id === currentJourney.id);
   const nodeCatalog = journeyNodes.map((n) => `[ID: ${n.id}] "${n.name}" (Status: ${n.status})`).join('\n');
 
-  const systemPrompt = `You are the AI log parser for Human Drift, an intention-tracking and drift-detection system.
+  const systemPrompt = `You are the AI log parser for Human Drift, a local evidence recorder. Do not classify drift, motivation, or correlations.
 Convert the user's natural language log into a structured JSON proposal adhering to this schema:
 {
   "journey_id": string (the active journey id),
@@ -272,14 +275,15 @@ Rules:
 - If intention changed during session, include "INTENTION_REVISED".
 - Output ONLY valid raw JSON. No markdown fences.`;
 
-  // 1. Try Ollama (Local First)
+  if (!currentOllamaModel) return fallbackLocalParse(message, journeys, nodes, targetJourneyId);
+  // Try only the explicitly selected local model.
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     const ollamaResp = await fetch(`${currentOllamaUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
+      signal: controller.signal, redirect: 'error',
       body: JSON.stringify({
         model: currentOllamaModel,
         prompt: `${systemPrompt}\n\nUser Log: "${message}"\n\nJSON Output:`,
@@ -308,52 +312,6 @@ Rules:
     // Ollama offline, proceed to fallbacks
   }
 
-  // 2. Try Gemini API
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (geminiKey) {
-    try {
-      const ai = new GoogleGenAI({
-        apiKey: geminiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
-      });
-
-      let text = '';
-      try {
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.6-flash',
-          contents: `${systemPrompt}\n\nUser Log: "${message}"`,
-          config: { responseMimeType: 'application/json' },
-        });
-        text = response.text?.trim() || '';
-      } catch {
-        const fallbackResp = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: `${systemPrompt}\n\nUser Log: "${message}"`,
-          config: { responseMimeType: 'application/json' },
-        });
-        text = fallbackResp.text?.trim() || '';
-      }
-
-      if (text) {
-        const cleanJson = text.replace(/```(?:json)?/g, '').replace(/```/g, '').trim();
-        const parsed = JSON.parse(cleanJson);
-        return {
-          ...parsed,
-          journey_id: parsed.journey_id || currentJourney.id,
-          provider: 'gemini',
-          condition: parsed.condition || extractConditionFromText(message),
-          entry_types: parsed.entry_types || ['TASK_STARTED'],
-        };
-      }
-    } catch {
-      // Gemini failed, proceed to local fallback
-    }
-  }
-
   // 3. Fallback Local Heuristic Parser
   return fallbackLocalParse(message, journeys, nodes, targetJourneyId);
 }
@@ -374,103 +332,6 @@ export async function answerQueryChat(
   const recentEntries = entries.filter((e) => (e.logged_at || '') >= thirtyDaysAgo);
 
   // Compact summary for prompt
-  const sessionsSummary = recentSessions.map((s) => {
-    const sEntries = recentEntries.filter((e) => e.session_id === s.id);
-    const j = journeys.find((jr) => jr.id === s.journey_id);
-    const conditions = sEntries.map((e) => e.condition).filter(Boolean);
-    const entryTypes = sEntries.map((e) => e.entry_type);
-
-    let durationMins = 0;
-    if (s.started_at && s.ended_at) {
-      try {
-        const d1 = new Date(s.started_at).getTime();
-        const d2 = new Date(s.ended_at).getTime();
-        durationMins = Math.max(0, Math.round((d2 - d1) / 60000));
-      } catch {}
-    }
-
-    return {
-      date: formatLocalDateKey(s.started_at),
-      thing: j?.name || 'Unknown',
-      intention: s.intention,
-      status: formatSessionStatus(s.status),
-      quality: s.quality || 'Unrated',
-      duration_minutes: durationMins,
-      entry_types: entryTypes,
-      conditions: conditions.slice(0, 3),
-      reflection: s.reflection,
-    };
-  });
-
-  const prompt = `You are the Human Drift Query Assistant. You answer questions strictly based on the user's logged sessions and drift data.
-Preserve honesty and direct facts. Calculate exact numbers, sums, and condition correlations.
-
-User's Data (Last 30 Days):
-Things Count: ${journeys.length} (${journeys.map((j) => j.name).join(', ')})
-Total Recent Sessions: ${recentSessions.length}
-Sessions Data:
-${JSON.stringify(sessionsSummary, null, 2)}
-
-User Question: "${question}"
-
-Provide a clear, objective, well-formatted answer. If data is missing or zero, state it clearly without making up false records.`;
-
-  // 1. Try Ollama First
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    const ollamaResp = await fetch(`${currentOllamaUrl}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: currentOllamaModel,
-        prompt: `${prompt}\n\nAnswer:`,
-        stream: false,
-      }),
-    });
-    clearTimeout(timeout);
-
-    if (ollamaResp.ok) {
-      const data: any = await ollamaResp.json();
-      const ans = data.response?.trim();
-      if (ans) {
-        return {
-          answer: ans,
-          provider: 'ollama',
-          sessions_analyzed: recentSessions.length,
-        };
-      }
-    }
-  } catch {
-    // Ollama offline
-  }
-
-  // 2. Try Gemini
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (geminiKey) {
-    try {
-      const ai = new GoogleGenAI({
-        apiKey: geminiKey,
-        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
-      });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: prompt,
-      });
-      const ans = response.text?.trim();
-      if (ans) {
-        return {
-          answer: ans,
-          provider: 'gemini',
-          sessions_analyzed: recentSessions.length,
-        };
-      }
-    } catch {
-      // Gemini failed, use local analytical calculation
-    }
-  }
-
   // 3. Deterministic Local Analytics Answer
   const qLower = question.toLowerCase();
   let calculatedAnswer = '';
@@ -485,16 +346,9 @@ Provide a clear, objective, well-formatted answer. If data is missing or zero, s
 
   // Total time query
   if (/how much time|total time|hours|duration/i.test(qLower)) {
-    let totalMins = 0;
-    for (const s of recentSessions) {
-      if (s.started_at && s.ended_at) {
-        const d1 = new Date(s.started_at).getTime();
-        const d2 = new Date(s.ended_at).getTime();
-        totalMins += Math.max(0, Math.round((d2 - d1) / 60000));
-      }
-    }
-    const hours = (totalMins / 60).toFixed(1);
-    calculatedAnswer = `In the last 30 days across ${recentSessions.length} recorded sessions, you logged approximately **${totalMins} minutes** (~**${hours} hours**) of work.`;
+    const summaries=recentSessions.map(s=>interpretSession(s,recentEntries.filter(e=>e.session_id===s.id),now));
+    const active=summaries.reduce((sum,s)=>sum+s.activeMinutes,0), unknown=summaries.reduce((sum,s)=>sum+s.unclassifiedPauseMinutes,0);
+    calculatedAnswer=`Across ${recentSessions.length} Sessions: **${active.toFixed(1)} minutes** of supported activity and **${unknown.toFixed(1)} minutes** unclassified. Open Sessions are provisional; overlapping Session reports are not deduplicated into unique wall-clock time.`;
   } else if (/yesterday/i.test(qLower)) {
     const yesterday = formatLocalDateKey(
       new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
@@ -530,4 +384,11 @@ Provide a clear, objective, well-formatted answer. If data is missing or zero, s
     provider: 'manual',
     sessions_analyzed: recentSessions.length,
   };
+}
+
+export function localOllamaUrl(input: string): string {
+  const url = new URL(input);
+  if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error('Ollama must use a loopback HTTP address with no credentials or path');
+  if (url.hostname === 'localhost') url.hostname = '127.0.0.1';
+  return url.origin;
 }

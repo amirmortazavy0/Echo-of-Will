@@ -120,7 +120,7 @@ export const ActiveSessionLogger: React.FC<ActiveSessionLoggerProps> = ({
   // End Tracking Form Inputs
   const [reflection, setReflection] = useState('');
   const [quality, setQuality] = useState<SessionQuality>('GOOD');
-  const [endStatus, setEndStatus] = useState<'COMPLETE' | 'INCOMPLETE' | 'ABANDONED'>('COMPLETE');
+  const [endStatus, setEndStatus] = useState<'COMPLETE' | 'INCOMPLETE'>('COMPLETE');
 
   // Submitting state
   const [submitting, setSubmitting] = useState(false);
@@ -1236,7 +1236,6 @@ export const ActiveSessionLogger: React.FC<ActiveSessionLoggerProps> = ({
                 >
                   <option value="COMPLETE">Complete</option>
                   <option value="INCOMPLETE">Incomplete (did not finish intention)</option>
-                  <option value="ABANDONED">Abandoned (interrupted / stopped)</option>
                 </select>
               </div>
 

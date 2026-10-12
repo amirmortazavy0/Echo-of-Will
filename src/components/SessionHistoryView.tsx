@@ -1,3 +1,5 @@
+import { getSessionEvidence } from '../api';
+import { interpretSession } from '../domain/evidence';
 import React, { useState } from 'react';
 import {
   Calendar,
@@ -38,6 +40,8 @@ export const SessionHistoryView: React.FC<SessionHistoryViewProps> = ({
   onRefresh = async () => {},
   onOpenRetrospectiveModal,
 }) => {
+  const [evidence,setEvidence]=useState<any>(null);
+  const [detailError,setDetailError]=useState('');
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
   const [sessionEntries, setSessionEntries] = useState<SessionEntry[]>([]);
   const [sessionSummary, setSessionSummary] = useState<any | null>(null);
@@ -53,20 +57,22 @@ export const SessionHistoryView: React.FC<SessionHistoryViewProps> = ({
 
   const openSessionDetail = async (session: Session) => {
     setSelectedSession(session);
-    setLoadingDetail(true);
+    setLoadingDetail(true);setEvidence(null);setDetailError('');setSessionSummary(null);setSessionEntries([]);setCorrections([]);
     try {
-      const [entries, summary, corr] = await Promise.all([
-        getSessionEntries(session.id).catch(() => []),
-        getSessionSummary(session.id).catch(() => null),
-        getCorrections().catch(() => []),
+      const [entries, summary, corr, original] = await Promise.all([
+        getSessionEntries(session.id),
+        getSessionSummary(session.id),
+        getCorrections(),
+        getSessionEvidence(session.id),
       ]);
       const safeEntries = Array.isArray(entries) ? entries : [];
       const safeCorr = Array.isArray(corr) ? corr : [];
+      setEvidence(original);
       setSessionEntries(safeEntries);
       setSessionSummary(summary);
       setCorrections(safeCorr.filter((c) => safeEntries.some((e) => e.id === c.entry_id)));
-    } catch (err) {
-      console.error('Failed to load session details:', err);
+    } catch (err:any) {
+      setDetailError(err.message);
     } finally {
       setLoadingDetail(false);
     }
@@ -74,9 +80,10 @@ export const SessionHistoryView: React.FC<SessionHistoryViewProps> = ({
 
   const getQualityBadge = (quality?: string | null) => {
     switch (quality) {
+      case 'EXCELLENT':
       case 'GOOD':
         return 'text-emerald-300 bg-emerald-950/60 border-emerald-800';
-      case 'NORMAL':
+      case 'FAIR':
         return 'text-sky-300 bg-sky-950/60 border-sky-800';
       case 'POOR':
         return 'text-rose-300 bg-rose-950/60 border-rose-800';
@@ -136,11 +143,8 @@ export const SessionHistoryView: React.FC<SessionHistoryViewProps> = ({
             {filteredSessions.map((session) => {
               const journey = journeys.find((j) => j.id === session.journey_id);
               const start = new Date(session.started_at);
-              const durationMins = session.ended_at
-                ? Math.round(
-                    (new Date(session.ended_at).getTime() - start.getTime()) / (1000 * 60)
-                  )
-                : null;
+              const interpreted = interpretSession(session, []);
+              const durationMins = session.ended_at && interpreted.validBounds ? Math.round(interpreted.sessionDurationMinutes) : null;
 
               return (
                 <div
@@ -266,6 +270,10 @@ export const SessionHistoryView: React.FC<SessionHistoryViewProps> = ({
                 </p>
               </div>
 
+              <p className="text-xs text-zinc-400">Intention provenance: {selectedSession.intention_provenance||'legacy_unknown'}. Times and entries below use accepted corrections; originals are retained.</p>
+              {detailError&&<p role="alert">{detailError}</p>}
+              {evidence&&<details><summary>Original reports, revisions, corrections and conflicts</summary><pre className="whitespace-pre-wrap text-xs">{JSON.stringify(evidence,null,2)}</pre></details>}
+              {sessionSummary?.issues?.map((issue:string)=><p key={issue} className="text-amber-300 text-xs">{issue}</p>)}
               {/* Summary Stats */}
               {sessionSummary && (
                 <div className="space-y-3">
@@ -275,16 +283,16 @@ export const SessionHistoryView: React.FC<SessionHistoryViewProps> = ({
                         Active Time
                       </span>
                       <span className="text-base font-semibold font-mono text-emerald-400">
-                        {sessionSummary.activeMinutes}m
+                        {formatMinutes(sessionSummary.activeMinutes)}
                       </span>
                     </div>
 
                     <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-800 text-center">
                       <span className="text-[10px] uppercase text-zinc-500 font-medium block">
-                        Pauses
+                        Unclassified
                       </span>
                       <span className="text-base font-semibold font-mono text-amber-400">
-                        {sessionSummary.unclassifiedPauseMinutes}m
+                        {formatMinutes(sessionSummary.unclassifiedPauseMinutes)}
                       </span>
                     </div>
 
@@ -293,7 +301,7 @@ export const SessionHistoryView: React.FC<SessionHistoryViewProps> = ({
                         Elapsed
                       </span>
                       <span className="text-base font-semibold font-mono text-zinc-100">
-                        {sessionSummary.sessionDurationMinutes}m
+                        {sessionSummary.validBounds ? formatMinutes(sessionSummary.sessionDurationMinutes) : 'Unknown bounds'}
                       </span>
                     </div>
 

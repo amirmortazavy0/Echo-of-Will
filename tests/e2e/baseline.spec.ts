@@ -1,0 +1,71 @@
+import { test, expect } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
+import { isolatedServer } from '../helpers/server.mjs';
+
+test('browser: signup, Thing, manual Session, entry, completion, reload and restart', async ({ page }) => {
+  const server = await isolatedServer();
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  // External resources are unnecessary for this synthetic local workflow.
+  await page.route('**/*', route => route.request().url().startsWith(server.url)
+    ? route.continue() : route.abort());
+  try {
+    await page.goto(server.url);
+    await page.getByRole('button', { name: 'Sign up', exact: true }).click();
+    await page.getByPlaceholder('Username', { exact: true }).fill('browser-test');
+    await page.getByPlaceholder('Password', { exact: true }).fill('synthetic-password');
+    await page.getByPlaceholder('Confirm password', { exact: true }).fill('synthetic-password');
+    await page.locator('button[type="submit"]').click();
+    await expect(page.getByRole('button', { name: 'Logout', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '4. Review', exact: false }).click();
+    await expect(page.getByRole('heading', { name: 'Evidence review' })).toBeVisible();
+    await page.getByRole('button', { name: '1. Quick Log', exact: false }).click();
+    await page.getByRole('button', { name: '+ New Thing', exact: true }).click();
+    await page.getByPlaceholder('e.g. Pist Core, Train Commute, Research & Development').fill('P0 browser fixture');
+    await page.getByRole('button', { name: 'Create Thing', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'New Thing', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Start Tracking', exact: true }).first().click();
+    await page.getByPlaceholder('What do you plan to work on during this session?').fill('Verify local capture');
+    await page.locator('button[type="submit"]').filter({ hasText: 'Start Tracking' }).click();
+    await expect(page.getByText('Tracking Session', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Quick Note', exact: true }).click();
+    await page.getByPlaceholder('What happened or what did you accomplish?', { exact: false }).fill('P0 synthetic evidence');
+    const entryResponse = page.waitForResponse(response => response.url().endsWith('/entries') && response.request().method() === 'POST');
+    await page.getByRole('button', { name: 'Record Entry', exact: true }).click();
+    expect((await entryResponse).status()).toBe(201);
+    await page.getByRole('button', { name: 'Conclude Tracking', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Tracking Session' }).getByRole('button', { name: 'Fair', exact: true }).click();
+    const endResponse = page.waitForResponse(response => response.url().endsWith('/end'));
+    await page.getByRole('button', { name: 'End Session', exact: true }).click();
+    expect((await endResponse).status()).toBe(200);
+    await expect(page.getByText('Tracking Session', { exact: true })).toBeHidden();
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Logout', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '+ Log Past Work', exact: true }).click();
+    const retrospective = page.getByRole('dialog', { name: 'Log past work' }).locator('form');
+    await retrospective.getByLabel('Original report').fill('Verify retrospective rating from an approximate report');
+    await retrospective.getByRole('combobox').first().selectOption({ label: 'P0 browser fixture' });
+    await retrospective.getByPlaceholder('e.g. Debugging storage synchronization, writing test cases').fill('Verify retrospective rating');
+    await retrospective.getByRole('button', { name: 'Fair', exact: true }).click();
+    const retrospectiveResponse = page.waitForResponse(response => response.url().endsWith('/quick-log') && response.request().method() === 'POST');
+    await retrospective.getByRole('button', { name: 'Log Completed Work', exact: true }).click();
+    expect((await retrospectiveResponse).status()).toBe(201);
+    await expect(page.getByRole('dialog', { name: 'Log past work' })).toHaveCount(0);
+    const storedPath = path.join(server.dataDir, 'pist_data.json');
+    const before = JSON.parse(fs.readFileSync(storedPath, 'utf8'));
+    expect(before.journeys).toHaveLength(1);
+    expect(before.sessions).toHaveLength(2);
+    expect(before.sessions[0]).toMatchObject({ intention: 'Verify local capture', status: 'COMPLETE', quality: 'FAIR' });
+    expect(before.session_entries.some(entry => entry.note === 'P0 synthetic evidence')).toBe(true);
+    expect(before.sessions[1]).toMatchObject({ intention: 'Verify retrospective rating', quality: 'FAIR' });
+    await server.stop();
+    await server.start();
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Logout', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Audit Trail', exact: true }).click();
+    await expect(page.getByText('"Verify local capture"', { exact: true })).toBeVisible();
+    expect(JSON.parse(fs.readFileSync(storedPath, 'utf8'))).toEqual(before);
+    expect(errors).toEqual([]);
+  } finally { await server.stop(); }
+});

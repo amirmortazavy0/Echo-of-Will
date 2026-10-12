@@ -39,7 +39,7 @@ export const QueryChatView: React.FC<QueryChatViewProps> = ({
     {
       id: 'welcome',
       sender: 'assistant',
-      text: 'Ask me anything about your logged intentions, sessions, conditions, and drift patterns over the last 30 days. I read strictly from your JSON database with zero hallucinations.',
+      text: 'Ask me anything about your logged intentions, sessions, and reported conditions over the last 30 days. I read strictly from your JSON database for descriptive summaries.',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
@@ -48,7 +48,7 @@ export const QueryChatView: React.FC<QueryChatViewProps> = ({
     'How much total time did I log across all journeys?',
     'What was my energy like during my recent sessions?',
     'What intentions did I work on yesterday?',
-    'Which tasks experienced context switches or drift?',
+    'Which tasks have reported context switches?',
   ];
 
   const handleSend = async (questionText?: string) => {
@@ -197,7 +197,7 @@ export const QueryChatView: React.FC<QueryChatViewProps> = ({
           type="text"
           value={inputQuestion}
           onChange={(e) => setInputQuestion(e.target.value)}
-          placeholder="Ask a question about your sessions, time spent, or drift..."
+          placeholder="Ask a question about your sessions, time spent, or reported conditions..."
           className="flex-1 bg-transparent px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none"
         />
 

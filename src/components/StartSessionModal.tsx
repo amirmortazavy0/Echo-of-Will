@@ -273,6 +273,7 @@ export const StartSessionModal: React.FC<StartSessionModalProps> = ({
                   onChange={(e) => setCondition({ ...condition, energy: e.target.value as any })}
                   className="w-full bg-zinc-950 border border-zinc-700 text-zinc-300 rounded-lg p-1.5 text-xs focus:outline-none focus:border-amber-500"
                 >
+                  <option value="UNKNOWN">Unknown</option>
                   <option value="LOW">Low</option>
                   <option value="MEDIUM">Medium</option>
                   <option value="HIGH">High</option>
@@ -286,6 +287,7 @@ export const StartSessionModal: React.FC<StartSessionModalProps> = ({
                   onChange={(e) => setCondition({ ...condition, focus: e.target.value as any })}
                   className="w-full bg-zinc-950 border border-zinc-700 text-zinc-300 rounded-lg p-1.5 text-xs focus:outline-none focus:border-amber-500"
                 >
+                  <option value="UNKNOWN">Unknown</option>
                   <option value="SCATTERED">Scattered</option>
                   <option value="NORMAL">Normal</option>
                   <option value="DEEP">Deep</option>
@@ -299,6 +301,7 @@ export const StartSessionModal: React.FC<StartSessionModalProps> = ({
                   onChange={(e) => setCondition({ ...condition, location: e.target.value as any })}
                   className="w-full bg-zinc-950 border border-zinc-700 text-zinc-300 rounded-lg p-1.5 text-xs focus:outline-none focus:border-amber-500"
                 >
+                  <option value="UNKNOWN">Unknown</option>
                   <option value="HOME">Home</option>
                   <option value="OFFICE">Office</option>
                   <option value="CAFE">Cafe</option>
@@ -316,6 +319,7 @@ export const StartSessionModal: React.FC<StartSessionModalProps> = ({
                   }
                   className="w-full bg-zinc-950 border border-zinc-700 text-zinc-300 rounded-lg p-1.5 text-xs focus:outline-none focus:border-amber-500"
                 >
+                  <option value="UNKNOWN">Unknown</option>
                   <option value="QUIET">Quiet</option>
                   <option value="AMBIENT">Ambient</option>
                   <option value="NOISY">Noisy</option>

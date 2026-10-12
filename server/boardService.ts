@@ -1,3 +1,4 @@
+import { effectiveData, interpretSession } from '../src/domain/evidence';
 import {
   AppData,
   BoardData,
@@ -24,6 +25,7 @@ export function computeBoardData(
   targetJourneyId?: string,
   now: Date = new Date()
 ): BoardData {
+  data = effectiveData(data);
   const isAll = !targetJourneyId || targetJourneyId === 'ALL';
 
   const filteredNodes = isAll
@@ -67,7 +69,7 @@ export function computeBoardData(
   const entriesByNode = new Map<string, SessionEntry[]>();
   for (const entry of entries) {
     const s = entry.session_id ? sessionsById.get(entry.session_id) : null;
-    const resolvedNodeId = entry.node_id || s?.node_id || null;
+    const resolvedNodeId = entry.node_id || null;
     if (resolvedNodeId) {
       if (!entriesByNode.has(resolvedNodeId)) {
         entriesByNode.set(resolvedNodeId, []);
@@ -177,7 +179,7 @@ export function computeBoardData(
 
   const recent_entries: BoardRecentEntry[] = filteredEntries.slice(0, 50).map((e) => {
     const s = e.session_id ? sessionsById.get(e.session_id) : null;
-    const resolvedNodeId = e.node_id || s?.node_id || null;
+    const resolvedNodeId = e.node_id || null;
     const n = resolvedNodeId ? nodesById.get(resolvedNodeId) : null;
     const jId = s?.journey_id || n?.journey_id || '';
     const j = journeysById.get(jId);
@@ -196,7 +198,7 @@ export function computeBoardData(
       entry_type: e.entry_type,
       logged_at: e.logged_at,
       note: e.note || s?.intention || 'Logged activity',
-      duration_minutes: nodeDuration,
+      // An atomic report does not itself have a duration.
       condition: e.condition,
     };
   });
@@ -204,7 +206,7 @@ export function computeBoardData(
   return {
     columns,
     total_nodes: nodeItems.length,
-    total_active_minutes: Math.round(grandTotalMinutes * 10) / 10,
+    total_active_minutes: sessions.filter(s=>isAll||s.journey_id===targetJourneyId).reduce((sum,s)=>sum+interpretSession(s,entries.filter(e=>e.session_id===s.id),now).activeMinutes,0),
     recent_entries,
   };
 }

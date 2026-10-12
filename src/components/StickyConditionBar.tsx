@@ -47,12 +47,14 @@ export const StickyConditionBar: React.FC<StickyConditionBarProps> = ({
   };
 
   const energyColors: Record<EnergyLevel, string> = {
+    UNKNOWN: 'text-zinc-400 border-zinc-700',
     LOW: 'text-amber-400 border-amber-500/40 bg-amber-500/10',
     MEDIUM: 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10',
     HIGH: 'text-cyan-400 border-cyan-500/40 bg-cyan-500/10',
   };
 
   const focusColors: Record<FocusLevel, string> = {
+    UNKNOWN: 'text-zinc-400 border-zinc-700',
     SCATTERED: 'text-rose-400 border-rose-500/40 bg-rose-500/10',
     NORMAL: 'text-zinc-300 border-zinc-700 bg-zinc-800',
     DEEP: 'text-purple-400 border-purple-500/40 bg-purple-500/10',

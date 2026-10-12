@@ -79,7 +79,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
             Human Drift
           </h1>
           <p className="text-xs text-zinc-500 mt-1">
-            Preserving intention through reality
+            Single local owner. Sign up once, then sign in.
           </p>
         </div>
 

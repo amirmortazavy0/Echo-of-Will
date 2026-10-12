@@ -1,3 +1,5 @@
+import type { NodeStatus } from '../types';
+
 export interface QueuedQuickLog {
   id: string;
   queuedAt: string;
@@ -5,7 +7,7 @@ export interface QueuedQuickLog {
     journey_id: string;
     node_id?: string | null;
     node_name: string;
-    node_status: 'ACTIVE' | 'COMPLETE' | 'PLANNED' | 'PAUSED';
+    node_status: NodeStatus;
     work_type: string;
     duration_minutes: number;
     intention: string;

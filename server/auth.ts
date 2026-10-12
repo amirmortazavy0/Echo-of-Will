@@ -1,269 +1,90 @@
-/**
- * server/auth.ts
- * Authentication service and Express JWT middleware for Human Drift:
- * - Reads/writes user credentials to backend/data/users.json (completely isolated from human_drift.json)
- * - Password hashing and verification using bcrypt (compatible with Python bcrypt)
- * - Generates and validates standard 7-day HS256 JWT tokens (compatible with python-jose)
- * - Protects non-public API endpoints with 401 Unauthorized verification
- */
-
-import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import { Request, Response, NextFunction } from 'express';
-
-export interface StoredUser {
-  username: string;
-  password_hash: string;
-  created_at: string;
+import type { Request, Response, NextFunction } from 'express';
+import { getDataDir, DEFAULT_USER_ID, StorageError } from './storage';
+export interface StoredUser { username:string; password_hash:string; created_at:string }
+interface UsersData { users:StoredUser[] }
+function usersPath() {
+  const primary=path.join(getDataDir(),'users.json');
+  const legacy=path.resolve('backend/users.json');
+  return !process.env.PIST_DATA_DIR && !fs.existsSync(primary) && fs.existsSync(legacy) ? legacy : primary;
 }
-
-interface UsersData {
-  users: StoredUser[];
-}
-
-const JWT_SECRET = process.env.JWT_SECRET || 'human-drift-secret-key-change-in-production';
-const ACCESS_TOKEN_EXPIRE_SECONDS = 7 * 24 * 60 * 60; // 7 days
-
-// Locate users.json
-function getUsersFilePath(): string {
-  const primary = path.join(process.cwd(), 'backend', 'data', 'users.json');
-  if (fs.existsSync(primary)) return primary;
-  const secondary = path.join(process.cwd(), 'backend', 'users.json');
-  if (fs.existsSync(secondary)) return secondary;
-  return primary;
-}
-
 export function readUsers(): UsersData {
-  const filePath = getUsersFilePath();
-  if (!fs.existsSync(filePath)) {
-    return { users: [] };
+  if (!fs.existsSync(usersPath())) return {users:[]};
+  let data:any; try { data=JSON.parse(fs.readFileSync(usersPath(),'utf8')); } catch { throw new StorageError('Credential file is unreadable; restore it explicitly rather than creating another owner'); }
+  if (!Array.isArray(data.users) || data.users.some((u:any)=>typeof u.username!=='string'||typeof u.password_hash!=='string')) throw new StorageError('Invalid credential file');
+  return data;
+}
+export function writeUsers(data:UsersData) {
+  const file=usersPath(); fs.mkdirSync(path.dirname(file),{recursive:true});
+  const temp=`${file}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(temp,JSON.stringify(data,null,2),{flag:'wx',mode:0o600}); fs.renameSync(temp,file);
+}
+function owner(): StoredUser | undefined {
+  const users=readUsers().users;
+  if (users.length>1) {
+    const selected=users.find(u=>u.username===process.env.PIST_OWNER_USERNAME);
+    if (!selected) throw new StorageError('Multiple legacy credentials found. Select the single local owner with PIST_OWNER_USERNAME; no accounts are deleted.');
+    return selected;
   }
+  return users[0];
+}
+function signingKey() {
+  const file=path.join(getDataDir(),'.owner-signing-key');
+  fs.mkdirSync(getDataDir(),{recursive:true});
+  if (!fs.existsSync(file)) { try { fs.writeFileSync(file,crypto.randomBytes(48).toString('hex'),{flag:'wx',mode:0o600}); } catch(error:any) { if(error.code!=='EEXIST') throw error; } }
+  const key=fs.readFileSync(file,'utf8'); if (!/^[0-9a-f]{96}$/.test(key)) throw new StorageError('Invalid owner signing key; do not silently replace it');
+  return key;
+}
+const encode=(value:unknown)=>Buffer.from(JSON.stringify(value)).toString('base64url');
+export function createJwtToken(username:string) {
+  const now=Math.floor(Date.now()/1000); const data=`${encode({alg:'HS256',typ:'JWT'})}.${encode({sub:username,owner_id:DEFAULT_USER_ID,iat:now,exp:now+7*86400})}`;
+  return `${data}.${crypto.createHmac('sha256',signingKey()).update(data).digest('base64url')}`;
+}
+export function verifyJwtToken(token:string): {username:string;owner_id:string}|null {
   try {
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error('Failed reading users.json:', err);
-    return { users: [] };
-  }
+    const [header,payload,signature,...extra]=token.split('.'); if(extra.length||!signature) return null;
+    if(JSON.parse(Buffer.from(header,'base64url').toString()).alg!=='HS256') return null;
+    const expected=crypto.createHmac('sha256',signingKey()).update(`${header}.${payload}`).digest('base64url');
+    if(signature.length!==expected.length || !crypto.timingSafeEqual(Buffer.from(signature),Buffer.from(expected))) return null;
+    const data=JSON.parse(Buffer.from(payload,'base64url').toString());
+    if(!Number.isInteger(data.exp)||data.exp<=Math.floor(Date.now()/1000)||data.owner_id!==DEFAULT_USER_ID||data.sub!==owner()?.username) return null;
+    return {username:data.sub,owner_id:DEFAULT_USER_ID};
+  } catch { return null; }
 }
-
-export function writeUsers(data: UsersData): void {
-  const filePath = getUsersFilePath();
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  const tempPath = `${filePath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
-  fs.renameSync(tempPath, filePath);
-
-  // Sync secondary path if exists
-  const altPath = path.join(process.cwd(), 'backend', 'users.json');
-  if (altPath !== filePath && fs.existsSync(altPath)) {
-    try {
-      fs.writeFileSync(`${altPath}.tmp`, JSON.stringify(data, null, 2), 'utf-8');
-      fs.renameSync(`${altPath}.tmp`, altPath);
-    } catch {
-      // Ignore sync error
-    }
-  }
+export async function signupUser(usernameRaw:string,password:string) {
+  if(typeof usernameRaw!=='string'||!usernameRaw.trim()||usernameRaw.length>100||typeof password!=='string'||password.length<8||password.length>1024) throw new Error('Choose a username and a password of at least 8 characters');
+  if(readUsers().users.length) throw new Error('Local owner already exists. Sign in; additional accounts are disabled.');
+  const password_hash=await bcrypt.hash(password,10);
+  // Recheck after the asynchronous hash: concurrent setup cannot create two owners.
+  if(readUsers().users.length) throw new Error('Local owner already exists. Sign in.');
+  const username=usernameRaw.trim(); signingKey();
+  writeUsers({users:[{username,password_hash,created_at:new Date().toISOString()}]});
+  return {token:createJwtToken(username),username};
 }
-
-// Helpers for HS256 JWT
-function base64UrlEncode(str: string): string {
-  return Buffer.from(str)
-    .toString('base64')
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
+export async function loginUser(usernameRaw:string,password:string) {
+  const user=owner();
+  if(typeof usernameRaw!=='string'||typeof password!=='string'||!user||user.username.toLowerCase()!==usernameRaw.trim().toLowerCase()||!await bcrypt.compare(password,user.password_hash)) throw new Error('Invalid local owner username or password');
+  return {token:createJwtToken(user.username),username:user.username};
 }
-
-function base64UrlDecode(str: string): string {
-  let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
-  while (base64.length % 4) {
-    base64 += '=';
+export interface AuthenticatedRequest extends Request {user?:{username:string;owner_id:string}}
+export function expressAuthMiddleware(req:AuthenticatedRequest,res:Response,next:NextFunction) {
+  if(['/auth/signup','/auth/login','/api/auth/signup','/api/auth/login','/api/health','/health'].includes(req.path)) return next();
+  if(req.path.startsWith('/api/')||req.path==='/auth/me') {
+    const header=req.headers.authorization;
+    const verified=header?.startsWith('Bearer ')?verifyJwtToken(header.slice(7)):null;
+    if(!verified) {res.status(401).json({detail:'Sign in as the local owner'});return;}
+    req.user=verified;
   }
-  return Buffer.from(base64, 'base64').toString('utf-8');
+  next();
 }
-
-export function createJwtToken(username: string): string {
-  const header = { alg: 'HS256', typ: 'JWT' };
-  const now = Math.floor(Date.now() / 1000);
-  const payload = {
-    sub: username,
-    iat: now,
-    exp: now + ACCESS_TOKEN_EXPIRE_SECONDS,
-  };
-
-  const encodedHeader = base64UrlEncode(JSON.stringify(header));
-  const encodedPayload = base64UrlEncode(JSON.stringify(payload));
-  const data = `${encodedHeader}.${encodedPayload}`;
-
-  const signature = crypto
-    .createHmac('sha256', JWT_SECRET)
-    .update(data)
-    .digest('base64')
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
-
-  return `${data}.${signature}`;
-}
-
-export function verifyJwtToken(token: string): { username: string } | null {
-  try {
-    const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
-    const parts = cleanToken.split('.');
-    if (parts.length !== 3) return null;
-
-    const [headerB64, payloadB64, signatureB64] = parts;
-    const data = `${headerB64}.${payloadB64}`;
-
-    const expectedSig = crypto
-      .createHmac('sha256', JWT_SECRET)
-      .update(data)
-      .digest('base64')
-      .replace(/=/g, '')
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_');
-
-    // Constant-time comparison
-    if (
-      signatureB64.length !== expectedSig.length ||
-      !crypto.timingSafeEqual(Buffer.from(signatureB64), Buffer.from(expectedSig))
-    ) {
-      return null;
-    }
-
-    const payload = JSON.parse(base64UrlDecode(payloadB64));
-    const now = Math.floor(Date.now() / 1000);
-    if (payload.exp && payload.exp < now) {
-      return null; // Expired
-    }
-
-    if (!payload.sub || typeof payload.sub !== 'string') {
-      return null;
-    }
-
-    return { username: payload.sub };
-  } catch (err) {
-    return null;
-  }
-}
-
-export async function signupUser(
-  usernameRaw: string,
-  passwordRaw: string
-): Promise<{ token: string; username: string }> {
-  const username = (usernameRaw || '').trim();
-  const password = passwordRaw || '';
-
-  if (!username) {
-    throw new Error('Username cannot be empty');
-  }
-  if (!password) {
-    throw new Error('Password cannot be empty');
-  }
-
-  const data = readUsers();
-  const exists = data.users.some(
-    (u) => u.username.toLowerCase() === username.toLowerCase()
-  );
-
-  if (exists) {
-    throw new Error('Username already exists');
-  }
-
-  const saltRounds = 10;
-  const password_hash = await bcrypt.hash(password, saltRounds);
-
-  const newUser: StoredUser = {
-    username,
-    password_hash,
-    created_at: new Date().toISOString(),
-  };
-
-  data.users.push(newUser);
-  writeUsers(data);
-
-  const token = createJwtToken(username);
-  return { token, username };
-}
-
-export async function loginUser(
-  usernameRaw: string,
-  passwordRaw: string
-): Promise<{ token: string; username: string }> {
-  const username = (usernameRaw || '').trim();
-  const password = passwordRaw || '';
-
-  if (!username || !password) {
-    throw new Error('Invalid username or password');
-  }
-
-  const data = readUsers();
-  const user = data.users.find(
-    (u) => u.username.toLowerCase() === username.toLowerCase()
-  );
-
-  if (!user) {
-    throw new Error('Invalid username or password');
-  }
-
-  const isMatch = await bcrypt.compare(password, user.password_hash);
-  if (!isMatch) {
-    throw new Error('Invalid username or password');
-  }
-
-  const token = createJwtToken(user.username);
-  return { token, username: user.username };
-}
-
-export interface AuthenticatedRequest extends Request {
-  user?: { username: string };
-}
-
-export function expressAuthMiddleware(
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-) {
-  const path = req.path;
-
-  // Public paths whitelist
-  const publicPaths = [
-    '/auth/signup',
-    '/auth/login',
-    '/api/auth/signup',
-    '/api/auth/login',
-    '/api/health',
-    '/health',
-  ];
-
-  if (publicPaths.includes(path) || req.method === 'OPTIONS') {
-    return next();
-  }
-
-  // If this is an API route or auth/me route, enforce authentication
-  if (path.startsWith('/api/') || path === '/auth/me' || path === '/api/auth/me') {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ detail: 'Missing or invalid authorization header' });
-    }
-
-    const token = authHeader.substring(7).trim();
-    const verified = verifyJwtToken(token);
-    if (!verified) {
-      return res.status(401).json({ detail: 'Could not validate credentials' });
-    }
-
-    req.user = verified;
-    return next();
-  }
-
-  // Non-API paths (Vite assets, index.html, static files)
-  return next();
+export function localBoundary(req:Request,res:Response,next:NextFunction) {
+  let host:URL;
+  try {host=new URL(`http://${req.headers.host}`);} catch {res.status(403).json({detail:'Invalid local host'});return;}
+  if(!['127.0.0.1','localhost','[::1]'].includes(host.hostname)) {res.status(403).json({detail:'Only local loopback access is supported'});return;}
+  if(req.headers.origin && req.headers.origin!==host.origin) {res.status(403).json({detail:'Cross-origin requests are disabled'});return;}
+  if(['POST','PUT','PATCH'].includes(req.method)&&!req.is('application/json')) {res.status(415).json({detail:'Use application/json'});return;}
+  next();
 }
