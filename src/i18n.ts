@@ -8,7 +8,7 @@ export type Lang = 'en' | 'fa';
 export const strings = {
   en: {
     // App shell
-    appName: 'Human Drift',
+    appName: 'Your workspace',
     loading: 'Loading…',
     noJourneySelected: 'No journey selected',
 
@@ -71,7 +71,7 @@ export const strings = {
 
   fa: {
     // App shell
-    appName: 'Human Drift',
+    appName: 'Your workspace',
     loading: 'در حال بارگذاری…',
     noJourneySelected: 'سفری انتخاب نشده',
 

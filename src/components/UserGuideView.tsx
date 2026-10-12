@@ -1,3 +1,4 @@
+import { useIdentity } from '../Identity';
 import React, { useState } from 'react';
 import {
   Compass, FolderTree, Play, History, BarChart2, ShieldCheck,
@@ -29,7 +30,7 @@ const content = {
     done: 'Start working →',
 
     whereAmI: {
-      title: "You're in Human Drift.",
+      title: "You're in your workspace.",
       body: "This app tracks the gap between what you intended to do and what actually happened. It doesn't manage your tasks — it observes your work and preserves the record honestly.",
       quote: "You declare what you intend to do. You log what actually happens. The system preserves both — and the gap between them — without ever rewriting history.",
       navTitle: 'Five views in the app',
@@ -109,7 +110,7 @@ const content = {
     done: 'شروع کار →',
 
     whereAmI: {
-      title: 'در Human Drift هستید.',
+      title: 'در فضای کاری خود هستید.',
       body: 'این اپ شکاف بین آنچه قصد داشتید و آنچه واقعاً اتفاق افتاد را ردیابی می‌کند. کارهایتان را مدیریت نمی‌کند — فقط آن‌ها را صادقانه ثبت می‌کند.',
       quote: 'اعلام می‌کنید چه قصدی دارید. ثبت می‌کنید چه اتفاقی افتاد. سیستم هر دو را — و فاصله بینشان را — بدون هیچ بازنویسی حفظ می‌کند.',
       navTitle: 'پنج بخش اپ',
@@ -215,6 +216,7 @@ const actionIcons = [
 ];
 
 export const UserGuideView: React.FC<UserGuideViewProps> = ({ lang, onNavigateTab, onOpenStartTracking }) => {
+  const { name: workspaceName } = useIdentity();
   const [step, setStep] = useState<StepId>('WHERE_AM_I');
   const c = content[lang];
   const steps = c.steps;
@@ -244,7 +246,7 @@ export const UserGuideView: React.FC<UserGuideViewProps> = ({ lang, onNavigateTa
         <div className="flex items-center gap-3 mb-4">
           <div className="p-2 bg-stone-900 text-white rounded-xl"><Compass className="w-4 h-4" /></div>
           <div>
-            <h2 className="text-sm font-bold text-stone-900">Human Drift</h2>
+            <h2 className="text-sm font-bold text-stone-900">{workspaceName}</h2>
             <p className="text-2xs text-stone-500">{lang === 'fa' ? 'راهنما' : 'Guide'}</p>
           </div>
         </div>

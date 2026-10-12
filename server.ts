@@ -51,6 +51,7 @@ import {
   validateSessionQuality,
 } from './src/utils/formatters';
 import {
+  ownerDisplayName,
   signupUser,
   loginUser,
   expressAuthMiddleware,
@@ -109,6 +110,21 @@ async function startServer() {
   app.post('/api/auth/signup', handleSignup);
   app.post('/auth/login', handleLogin);
   app.post('/api/auth/login', handleLogin);
+
+  app.get('/auth/branding', (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try { res.json({ username: ownerDisplayName() }); }
+    catch { res.status(503).json({ username: null }); }
+  });
+  app.get('/manifest.webmanifest', (_req, res) => {
+    let name = 'Your workspace';
+    try { name = ownerDisplayName() || name; } catch { /* No selected identity yet. */ }
+    res.set('Cache-Control', 'no-store').type('application/manifest+json').send(JSON.stringify({
+      id: '/', name, short_name: name, start_url: '/', scope: '/', display: 'standalone',
+      theme_color: '#0c0a09', background_color: '#0c0a09',
+      icons: [192, 512].map(size => ({ src: '/pwa-' + size + 'x' + size + '.png', sizes: size + 'x' + size, type: 'image/png' }))
+    }));
+  });
 
   // JWT Middleware to protect all subsequent API endpoints
   app.use(expressAuthMiddleware as any);

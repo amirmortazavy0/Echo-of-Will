@@ -1,6 +1,6 @@
 # Echo of Will
 
-Local evidence recorder built with React 19, TypeScript, Express and JSON. P0–P3 establish repeatable checks, a local owner boundary, safe storage and historical mutation rules. Capture provenance, consistent time interpretation, exports and disconnected-device operation remain P4–P7 work.
+Local evidence recorder built with React 19, TypeScript, Express and JSON. P0–P5 establish repeatable checks, a local owner boundary, safe storage, preserved capture reports, historical mutation rules, shared time interpretation and complete authenticated exports. P8 username branding is complete. P6 disconnected-device operation and P7 controlled use remain open.
 
 ## Run locally
 
@@ -47,3 +47,9 @@ Browser tests use installed Edge on Windows (or PLAYWRIGHT_CHANNEL); Chromium is
 Baseline verification requires the private manifest. On a new checkout, preserve a baseline with node scripts/snapshot-baseline.mjs while the application is stopped. Never commit .private or use startup as a migration experiment.
 
 See [Developer Guide](Docs/DEVELOPER_GUIDE.md). The authoritative roadmap and domain documents live in the external Echo of Will Obsidian vault, not duplicated repository Docs folders.
+
+## P4/P5 handoff
+
+Manual and local-assisted reports share an editable review form. The live dialog supports Discovery, revisions, Node/Thing switches and corrections. Original reports and intentions are retained; unconfirmed reported bounds remain unclassified. Exports are fresh complete snapshots with original and effective JSON, one Session document per Thing and a manifest.
+
+Final verification on 2026-10-13: 2 E2E browser workflows passed, then full QA passed. No real-data migration was performed. P8 subsequently completed username-based branding before P6/P7.

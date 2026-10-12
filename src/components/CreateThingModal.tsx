@@ -94,7 +94,7 @@ export const CreateThingModal: React.FC<CreateThingModalProps> = ({
                 setName(e.target.value);
                 if (error) setError(null);
               }}
-              placeholder="e.g. Pist Core, Train Commute, Research & Development"
+              placeholder="e.g. App Development, Train Commute, Research & Development"
               className="w-full bg-zinc-950 border border-zinc-700 text-zinc-100 placeholder-zinc-500 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-amber-500 transition-colors"
             />
           </div>

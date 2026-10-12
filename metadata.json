@@ -1,5 +1,5 @@
 {
-  "name": "Human Drift — R&D Work Logger",
+  "name": "Personal workspace",
   "description": "An R&D prototype investigating plan-execution drift by preserving intention, logging reality, and maintaining continuity of meaning across flexible work hierarchies.",
   "requestFramePermissions": ["microphone"],
   "majorCapabilities": []

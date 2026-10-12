@@ -12,41 +12,11 @@ export default defineConfig(() => {
       VitePWA({
         registerType: 'autoUpdate',
         includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icon.svg'],
-        manifest: {
-          id: '/',
-          name: 'Human Drift — Daily Logger',
-          short_name: 'HumanDrift',
-          description: 'R&D Daily Work Logger preserving intention, reality, and domain integrity.',
-          theme_color: '#0c0a09',
-          background_color: '#0c0a09',
-          display: 'standalone',
-          orientation: 'portrait-primary',
-          start_url: '/',
-          scope: '/',
-          icons: [
-            {
-              src: '/pwa-192x192.png',
-              sizes: '192x192',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: '/pwa-512x512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: '/pwa-maskable-512x512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'maskable',
-            },
-          ],
-        },
+        manifest: false,
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [
+            { urlPattern: ({ url }) => url.pathname === '/auth/branding' || url.pathname === '/manifest.webmanifest', handler: 'NetworkOnly' },
             {
               urlPattern: /^\/api\/.*$/i,
               handler: 'NetworkFirst',

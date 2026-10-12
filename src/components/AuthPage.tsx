@@ -1,3 +1,4 @@
+import { useIdentity } from '../Identity';
 /**
  * src/components/AuthPage.tsx
  * Authentication gate for Human Drift:
@@ -16,6 +17,7 @@ interface AuthPageProps {
 }
 
 export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
+  const { name: workspaceName } = useIdentity();
   const [activeTab, setActiveTab] = useState<'signin' | 'signup'>('signin');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -76,7 +78,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
         {/* Title */}
         <div className="text-center mb-6">
           <h1 className="text-base font-bold text-zinc-100 tracking-wide">
-            Human Drift
+            {workspaceName}
           </h1>
           <p className="text-xs text-zinc-500 mt-1">
             Single local owner. Sign up once, then sign in.

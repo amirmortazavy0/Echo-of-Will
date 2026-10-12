@@ -1,8 +1,10 @@
+import { useIdentity } from '../Identity';
 import React, { useState } from 'react';
 import { Download, Share, X } from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 
 export const PWAInstallButton: React.FC = () => {
+  const { name: workspaceName } = useIdentity();
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
 
@@ -16,7 +18,7 @@ export const PWAInstallButton: React.FC = () => {
       <button
         onClick={install}
         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium shadow-sm transition-colors cursor-pointer"
-        title="Install Human Drift PWA to Home Screen"
+        title={`Install ${workspaceName} to Home Screen`}
       >
         <Download className="w-3.5 h-3.5" />
         <span className="hidden sm:inline">Install App</span>
@@ -59,7 +61,7 @@ export const PWAInstallButton: React.FC = () => {
                 </div>
                 <div className="flex items-start gap-2.5">
                   <div className="w-5 h-5 rounded-full bg-stone-800 flex items-center justify-center text-xs font-bold shrink-0">3</div>
-                  <p>Open Human Drift directly from your phone screen in under 2 seconds.</p>
+                  <p>Open {workspaceName} directly from your home screen.</p>
                 </div>
               </div>
               <button

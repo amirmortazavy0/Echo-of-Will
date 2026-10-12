@@ -83,7 +83,7 @@ export const TaskView: React.FC<TaskViewProps> = ({
       if (!context) {
         context = await createJourney({
           name: 'My Things',
-          description: 'Default context for Things in Pist.',
+          description: 'Default context for your Things.',
         });
       }
 
@@ -398,7 +398,7 @@ export const TaskView: React.FC<TaskViewProps> = ({
                   required
                   value={newJourneyName}
                   onChange={(e) => setNewJourneyName(e.target.value)}
-                  placeholder="e.g. Pist Architecture, Deep Work, Writing"
+                  placeholder="e.g. App Architecture, Deep Work, Writing"
                   className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-zinc-100 text-xs focus:outline-none focus:border-amber-500"
                 />
               </div>

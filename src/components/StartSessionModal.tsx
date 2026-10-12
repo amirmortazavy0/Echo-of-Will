@@ -187,7 +187,7 @@ export const StartSessionModal: React.FC<StartSessionModalProps> = ({
                   autoFocus={journeys.length === 0}
                   value={newThingName}
                   onChange={(e) => setNewThingName(e.target.value)}
-                  placeholder="Enter name for new Thing (e.g. Pist Core, Python Study)..."
+                  placeholder="Enter name for new Thing (e.g. App Development, Python Study)..."
                   className="w-full bg-zinc-950 border border-amber-500/50 text-zinc-100 placeholder-zinc-500 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-amber-400"
                 />
                 {journeys.length === 0 && (
