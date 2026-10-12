@@ -1,3 +1,4 @@
+import { useIdentity } from '../Identity';
 import React, { useState } from 'react';
 import { OllamaStatus, QueryChatResponse } from '../types';
 import { askQueryChat } from '../api';
@@ -33,6 +34,7 @@ export const QueryChatView: React.FC<QueryChatViewProps> = ({
   ollamaStatus,
   onOpenSettings,
 }) => {
+  const { name: workspaceName } = useIdentity();
   const [inputQuestion, setInputQuestion] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState<QueryChatMessage[]>([
@@ -96,7 +98,7 @@ export const QueryChatView: React.FC<QueryChatViewProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-zinc-800">
         <div>
           <h2 className="text-xl font-bold text-zinc-100 flex items-center gap-2">
-            <span>Ask Pist</span>
+            <span>Ask {workspaceName}</span>
             <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 font-mono font-normal">
               View 2
             </span>

@@ -1,0 +1,52 @@
+import { test, expect } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
+import { isolatedServer } from '../helpers/server.mjs';
+
+test('username branding follows setup, login, logout, reload and selected legacy owner', async ({ page }) => {
+  const server = await isolatedServer();
+  const username = 'Owner <local> & دوست';
+  try {
+    await page.goto(server.url);
+    await expect(page.getByRole('heading', { name: 'Your workspace', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Sign up', exact: true }).click();
+    await page.getByPlaceholder('Username', { exact: true }).fill(username);
+    await page.getByPlaceholder('Password', { exact: true }).fill('synthetic-password');
+    await page.getByPlaceholder('Confirm password', { exact: true }).fill('synthetic-password');
+    await page.locator('button[type="submit"]').click();
+    await expect(page.getByRole('button', { name: 'Logout', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: username, exact: true })).toBeVisible();
+    await expect(page).toHaveTitle(username);
+    const branding = await page.request.get(server.url + '/auth/branding');
+    expect(branding.headers()['cache-control']).toBe('no-store');
+    expect(await branding.json()).toEqual({ username });
+    const manifest = await page.request.get(server.url + '/manifest.webmanifest');
+    expect((await manifest.json()).name).toBe(username);
+    await page.getByRole('button', { name: 'Logout', exact: true }).click();
+    await expect(page.getByRole('heading', { name: username, exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page).toHaveTitle(username);
+    await page.getByPlaceholder('Username', { exact: true }).fill(username);
+    await page.getByPlaceholder('Password', { exact: true }).fill('synthetic-password');
+    await page.locator('button[type="submit"]').click();
+    await expect(page.getByRole('button', { name: 'Logout', exact: true })).toBeVisible();
+    await expect(page.locator('body')).not.toContainText('Human Drift');
+    await expect(page.locator('body')).not.toContainText('Pist');
+    await server.stop();
+    const file = path.join(server.dataDir, 'users.json');
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    data.users.push({ ...data.users[0], username: 'Second owner' });
+    fs.writeFileSync(file, JSON.stringify(data));
+    await server.start();
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Your workspace', exact: true })).toBeVisible();
+    expect(await (await page.request.get(server.url + '/auth/branding')).json()).toEqual({ username: null });
+    await server.stop();
+    fs.appendFileSync(path.join(server.directory, '.env'), '\nPIST_OWNER_USERNAME="Second owner"\n');
+    await server.start();
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Second owner', exact: true })).toBeVisible();
+    await expect(page).toHaveTitle('Second owner');
+    expect((await (await page.request.get(server.url + '/manifest.webmanifest')).json()).short_name).toBe('Second owner');
+  } finally { await server.stop(); }
+});

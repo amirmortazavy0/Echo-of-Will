@@ -31,6 +31,8 @@ function owner(): StoredUser | undefined {
   }
   return users[0];
 }
+// Only the selected local owner's display name is public; credentials stay private.
+export function ownerDisplayName(): string | null { return owner()?.username ?? null; }
 function signingKey() {
   const file=path.join(getDataDir(),'.owner-signing-key');
   fs.mkdirSync(getDataDir(),{recursive:true});

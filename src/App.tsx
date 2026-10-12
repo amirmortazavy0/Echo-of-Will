@@ -1,3 +1,4 @@
+import { useIdentity } from './Identity';
 import { downloadExport } from './api';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -61,6 +62,8 @@ import { OfflineIndicator } from './components/OfflineIndicator';
 import { AuthPage } from './components/AuthPage';
 export default function App() {
   const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const { setAuthenticatedUsername } = useIdentity();
+  useEffect(() => setAuthenticatedUsername(currentUser), [currentUser, setAuthenticatedUsername]);
   const [authChecking, setAuthChecking] = useState(true);
 
   const [journeys, setJourneys] = useState<Journey[]>([]);
@@ -292,11 +295,11 @@ export default function App() {
           {/* Logo & Core Philosophy */}
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-zinc-100 text-zinc-950 flex items-center justify-center font-black text-sm tracking-tighter shadow-md">
-              HD
+              {Array.from(currentUser)[0]?.toUpperCase()}
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="font-bold text-base tracking-tight text-zinc-100">Pist</h1>
+                <h1 className="font-bold text-base tracking-tight text-zinc-100" title={currentUser}>{currentUser}</h1>
                 <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 border border-zinc-700 font-mono text-zinc-400">
                   v1.0
                 </span>
@@ -483,7 +486,7 @@ export default function App() {
         {loading ? (
           <div className="p-16 text-center text-zinc-500 text-sm">
             <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-zinc-400" />
-            <span>Loading Pist...</span>
+            <span>Loading {currentUser}...</span>
           </div>
         ) : (
           <>

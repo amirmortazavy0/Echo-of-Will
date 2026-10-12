@@ -22,7 +22,7 @@ test('browser: signup, Thing, manual Session, entry, completion, reload and rest
     await expect(page.getByRole('heading', { name: 'Evidence review' })).toBeVisible();
     await page.getByRole('button', { name: '1. Quick Log', exact: false }).click();
     await page.getByRole('button', { name: '+ New Thing', exact: true }).click();
-    await page.getByPlaceholder('e.g. Pist Core, Train Commute, Research & Development').fill('P0 browser fixture');
+    await page.getByPlaceholder('e.g. App Development, Train Commute, Research & Development').fill('P0 browser fixture');
     await page.getByRole('button', { name: 'Create Thing', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'New Thing', exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: 'Start Tracking', exact: true }).first().click();

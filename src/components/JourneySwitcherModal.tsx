@@ -37,7 +37,7 @@ export const JourneySwitcherModal: React.FC<JourneySwitcherModalProps> = ({
         {/* Content */}
         <div className="p-6 space-y-4">
           <div className="text-xs text-stone-600 leading-relaxed bg-stone-50 p-3 rounded-xl border border-stone-200">
-            A <strong>Thing context</strong> is a long-lived investigative context. Human Drift provides
+            A <strong>Thing context</strong> is a long-lived investigative context. your workspace provides
             two primary reference journeys to test both physical schedule drift and cognitive workflow drift.
           </div>
 
