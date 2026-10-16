@@ -72,6 +72,7 @@ export default function App() {
   const [entries, setEntries] = useState<SessionEntry[]>([]);
   const [boardData, setBoardData] = useState<BoardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError,setLoadError]=useState('');
   const [activeTab, setActiveTab] = useState<NavTab>('LOG');
 
   // Ollama AI layer state
@@ -106,14 +107,14 @@ export default function App() {
   const loadData = useCallback(async () => {
     try {
       const [jrns, sss, nds, ents, aiStatus, boardRes] = await Promise.all([
-        getJourneys().catch(() => []),
-        getSessions().catch(() => []),
-        getNodes().catch(() => []),
-        getAllEntries().catch(() => []),
+        getJourneys(),
+        getSessions(),
+        getNodes(),
+        getAllEntries(),
         getOllamaStatus().catch(() => ({
           status: 'offline' as const,
           url: 'http://localhost:11434',
-          model: 'phi3:mini',
+          model: '',
           available_models: [],
           provider: 'manual' as const,
         })),
@@ -125,6 +126,7 @@ export default function App() {
       const safeNodes = Array.isArray(nds) ? nds : [];
       const safeEntries = Array.isArray(ents) ? ents : [];
 
+      setLoadError('');
       setJourneys(safeJourneys);
       setSessions(safeSessions);
       setNodes(safeNodes);
@@ -145,6 +147,7 @@ export default function App() {
         setActiveSession(null);
       }
     } catch (err) {
+      setLoadError('Could not refresh records. The last successfully loaded state is retained; check the local backend.');
       console.error('Failed to load application data:', err);
     } finally {
       setLoading(false);
@@ -175,7 +178,6 @@ export default function App() {
           setCurrentUser(user.username);
         }
       } catch {
-        removeStoredToken();
         if (isMounted) {
           setCurrentUser(null);
         }
@@ -204,6 +206,14 @@ export default function App() {
       loadData();
     }
   }, [currentUser, loadData]);
+
+  useEffect(() => {
+    if(!currentUser)return;
+    let live=true;
+    const refresh=()=>getOllamaStatus().then(status=>{if(live)setOllamaStatus(status);}).catch(()=>{});
+    void refresh();const timer=setInterval(refresh,30000);window.addEventListener('focus',refresh);
+    return()=>{live=false;clearInterval(timer);window.removeEventListener('focus',refresh);};
+  },[currentUser]);
 
   const handleLogout = () => {
     removeStoredToken();
@@ -279,6 +289,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-emerald-500/30 selection:text-emerald-200">
+      {loadError&&<p role="alert" className="p-3 text-amber-300">{loadError}</p>}
       {/* Sticky Condition Bar (Visible When Active Session Exists) */}
       <StickyConditionBar
         activeSession={activeSession}

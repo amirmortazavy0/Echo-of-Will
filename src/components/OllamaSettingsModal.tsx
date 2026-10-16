@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { OllamaStatus } from '../types';
 import { updateOllamaSettings, getOllamaStatus } from '../api';
 import { Cpu, CheckCircle2, AlertCircle, RefreshCw, X } from 'lucide-react';
@@ -17,10 +17,11 @@ export const OllamaSettingsModal: React.FC<OllamaSettingsModalProps> = ({
   onStatusUpdated,
 }) => {
   const [url, setUrl] = useState(status?.url || 'http://localhost:11434');
-  const [model, setModel] = useState(status?.model || 'phi3:mini');
+  const [model, setModel] = useState(status?.model || '');
   const [isSaving, setIsSaving] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
 
+  useEffect(() => { if (isOpen) { setUrl(status?.url || 'http://127.0.0.1:11434'); setModel(status?.model || ''); setTestResult(null); } }, [isOpen, status?.url, status?.model]);
   if (!isOpen) return null;
 
   const handleTestAndSave = async (e: React.FormEvent) => {
@@ -34,9 +35,9 @@ export const OllamaSettingsModal: React.FC<OllamaSettingsModalProps> = ({
       onStatusUpdated(newStatus);
 
       if (newStatus.status === 'online') {
-        setTestResult(`Connected! Detected ${newStatus.available_models.length} model(s).`);
+        setTestResult(`Connected to the selected local model. Detected ${newStatus.available_models.length} model(s).`);
       } else {
-        setTestResult('Saved settings, but Ollama is currently unreachable at this URL.');
+        setTestResult('Settings applied for this running app. Manual mode is active: the model is blank, missing, or Ollama is unavailable.');
       }
     } catch (err: any) {
       setTestResult(`Error: ${err.message}`);
@@ -109,11 +110,11 @@ export const OllamaSettingsModal: React.FC<OllamaSettingsModalProps> = ({
               type="text"
               value={model}
               onChange={(e) => setModel(e.target.value)}
-              placeholder="phi3:mini"
+              placeholder="llama3.2:3b"
               className="w-full px-3 py-2 text-sm bg-zinc-950 border border-zinc-700 rounded-lg text-zinc-200 focus:outline-none focus:border-zinc-500 font-mono"
             />
             <p className="text-[11px] text-zinc-500 mt-1">
-              Default: phi3:mini (also supports llama3, mistral, qwen, etc.)
+              Use an installed local model, such as llama3.2:3b. Leave blank for manual mode. Changes apply until restart; .env supplies startup settings.
             </p>
           </div>
 

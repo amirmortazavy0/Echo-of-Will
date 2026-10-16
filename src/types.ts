@@ -252,7 +252,9 @@ export interface ParsedLogProposal {
   is_new_node?: boolean;
   node_status: NodeStatus;
   work_type: string;
-  duration_minutes: number;
+  duration_minutes: number | null;
+  model?: string;
+  fallback_reason?: string;
   intention: string;
   summary?: string;
   entry_types?: EntryType[];
@@ -263,6 +265,7 @@ export interface ParsedLogProposal {
 }
 
 export interface QuickLogPayload {
+  client_confirmed_at?: string;
   original_report?: string;
   provider?: 'manual' | 'ollama' | 'heuristic' | 'local_heuristic';
   proposal?: unknown;

@@ -12,7 +12,7 @@ export const getBackupStoragePath = () => `${getCanonicalStoragePath()}.bak`;
 export const STORAGE_FILE = getCanonicalStoragePath();
 export const BACKEND_STORAGE_FILE = STORAGE_FILE;
 export class StorageError extends Error { status = 503; }
-const collections = ['journeys', 'nodes', 'sessions', 'session_entries', 'audit_log', 'event_log', 'corrections', 'conflicts', 'intention_revisions', 'node_estimate_history', 'node_closures', 'session_amendments', 'capture_reports'] as const;
+const collections = ['journeys', 'nodes', 'sessions', 'session_entries', 'audit_log', 'event_log', 'corrections', 'conflicts', 'intention_revisions', 'node_estimate_history', 'node_closures', 'session_amendments', 'capture_reports', 'command_receipts'] as const;
 const revisions = new WeakMap<AppData, string | null>();
 const originals = new WeakMap<AppData, AppData>();
 export const fileHash = (file: string) => fs.existsSync(file) ? createHash('sha256').update(fs.readFileSync(file)).digest('hex') : null;
@@ -102,7 +102,7 @@ export function writeAppData(data: AppData): void {
       }
     }
   }
-  for (const key of ['audit_log', 'event_log', 'corrections', 'intention_revisions', 'node_estimate_history', 'node_closures', 'session_amendments', 'capture_reports', 'session_entries']) {
+  for (const key of ['audit_log', 'event_log', 'corrections', 'intention_revisions', 'node_estimate_history', 'node_closures', 'session_amendments', 'capture_reports', 'command_receipts', 'session_entries']) {
     for (const old of (previous as any)?.[key] || []) {
       if (!isDeepStrictEqual(old, (data as any)[key]?.find((r: any) => r.id === old.id))) throw new StorageError(`Historical ${key} records are immutable; append an amendment/correction`);
     }

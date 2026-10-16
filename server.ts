@@ -1,3 +1,4 @@
+import { replayCapture } from './server/replay';
 import { captureSession } from './server/capture';
 import { effectiveData } from './src/domain/evidence';
 import { validateMutation, latestEntry, effectiveEntry } from './server/commands';
@@ -128,6 +129,7 @@ async function startServer() {
 
   // JWT Middleware to protect all subsequent API endpoints
   app.use(expressAuthMiddleware as any);
+  app.use(replayCapture);
   app.use(validateMutation);
 
   const handleMe = (req: Request, res: Response) => {
@@ -1437,12 +1439,13 @@ async function startServer() {
   // AI natural language work logger parser
   app.post('/api/ai/parse-log', async (req: Request, res: Response) => {
     const { message, journey_id } = req.body;
-    if (!message || !String(message).trim()) {
-      res.status(400).json({ detail: 'Log message is required' });
+    if (typeof message !== 'string' || !message.trim() || message.length > 12000 || (journey_id !== undefined && typeof journey_id !== 'string')) {
+      res.status(400).json({ detail: 'Provide a report of 1–12000 characters and an optional Thing id' });
       return;
     }
 
     const data = readAppData();
+    if (journey_id && !data.journeys.some(j => j.id === journey_id)) { res.status(400).json({ detail: 'Choose an existing Thing' }); return; }
     try {
       const proposal = await parseNaturalLanguageLog(
         String(message).trim(),

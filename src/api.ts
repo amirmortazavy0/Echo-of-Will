@@ -1,3 +1,4 @@
+import { cachedIdentity, rememberIdentity, enqueueLog, flushQueuedLogs, getQueuedLogs } from './utils/offlineQueue';
 import {
   BoardData,
   ConflictLog,
@@ -39,10 +40,19 @@ async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
   }
-  const res = await fetch(url, {
-    ...init,
-    headers,
-  });
+  const identity=cachedIdentity();
+  const cacheKey=identity?'eow-cache:'+encodeURIComponent(identity.username)+':'+url:null;
+  let res:Response;
+  try { res=await fetch(url,{...init,headers,signal:init?.signal||AbortSignal.timeout(url.includes('/ai/parse-log')?310000:15000)}); }
+  catch(error){
+    if ((!init?.method||init.method==='GET') && cacheKey && !url.includes('/ai/')) {
+      const cached=localStorage.getItem(cacheKey);if(cached)return new Response(cached,{headers:{'Content-Type':'application/json','X-Local-Snapshot':'true'}});
+    }
+    throw error;
+  }
+  if(res.ok&&(!init?.method||init.method==='GET')&&cacheKey&&!url.includes('/ai/')&&!url.includes('/export')) {
+    try {localStorage.setItem(cacheKey,await res.clone().text());} catch { /* A cache failure must not hide a live read. */ }
+  }
 
   if (res.status === 401 && !url.includes('/auth/login') && !url.includes('/auth/signup')) {
     window.dispatchEvent(new CustomEvent('hd:unauthorized'));
@@ -65,7 +75,7 @@ export async function authSignup(payload: {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `Signup failed (${res.status})`);
   }
-  return res.json();
+  const data=await res.json();rememberIdentity(data.username,data.token);return data;
 }
 
 export async function authLogin(payload: {
@@ -81,24 +91,16 @@ export async function authLogin(payload: {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Invalid username or password');
   }
-  return res.json();
+  const data=await res.json();rememberIdentity(data.username,data.token);return data;
 }
 
-export async function authMe(tokenOverride?: string): Promise<{ username: string }> {
-  const token = tokenOverride || getStoredToken();
-  if (!token) {
-    throw new Error('No authentication token found');
-  }
-  const res = await fetch('/auth/me', {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Unauthorized');
-  }
-  return res.json();
+export async function authMe(tokenOverride?: string): Promise<{username:string}> {
+ const token=tokenOverride||getStoredToken();if(!token)throw new Error('No authentication token found');
+ let res:Response;
+ try{res=await fetch('/auth/me',{headers:{Authorization:'Bearer '+token},signal:AbortSignal.timeout(5000)});}
+ catch(error){const prior=cachedIdentity();if(prior&&prior.token===token)return {username:prior.username};throw error;}
+ if(!res.ok){if(res.status===401)removeStoredToken();throw new Error('Owner verification failed ('+res.status+')');}
+ const data=await res.json();rememberIdentity(data.username,token);return data;
 }
 
 // --- Journeys ---
@@ -543,17 +545,10 @@ export async function parseLogWithAI(
   return res.json();
 }
 
-export async function quickLogSession(payload: QuickLogPayload): Promise<QuickLogResponse> {
-  const res = await apiFetch(`${API_BASE}/sessions/quick-log`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to log session: ${res.statusText}`);
-  }
-  return res.json();
+export async function quickLogSession(payload: QuickLogPayload): Promise<{pending:boolean}> {
+ const item=enqueueLog(payload);
+ await flushQueuedLogs();
+ return {pending:getQueuedLogs().some(q=>q.id===item.id)};
 }
 
 // --- Ollama & AI Layer ---
