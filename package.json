@@ -12,12 +12,13 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "npm run typecheck",
-    "test:regression": "node --import tsx --test tests/regression.test.ts tests/storage.test.ts tests/domain.test.ts tests/evidence.test.ts",
+    "test:regression": "node --import tsx --test tests/regression.test.ts tests/storage.test.ts tests/domain.test.ts tests/evidence.test.ts tests/ai.test.ts",
     "test:startup": "node --test tests/startup.test.mjs",
     "test:e2e": "playwright test",
     "test:qa": "npm run typecheck && npm run test:regression && npm run build && npm run test:startup && npm run test:integration && node scripts/verify-baseline.mjs",
     "storage:migrate": "node --env-file-if-exists=.env --import tsx scripts/storage-migrate.ts",
-    "test:integration": "node --import tsx --test tests/repair-integration.test.mjs tests/capture-integration.test.ts"
+    "test:integration": "node --import tsx --test tests/repair-integration.test.mjs tests/capture-integration.test.ts",
+    "test:ollama": "node --env-file-if-exists=.env --import tsx --test tests/ollama-live.test.ts"
   },
   "engines": {
     "node": ">=22.20.0 <23",

@@ -6,6 +6,7 @@ import { validateCommand, selectCondition, CommandError, timestamp, text } from 
 import { deriveSessionStatusFromEndReason } from '../src/utils/formatters';
 
 export function validateCapture(body:any,data:AppData) {
+  if(body.client_confirmed_at!==undefined)timestamp(body.client_confirmed_at,'client_confirmed_at');
   text(body.original_report,'original_report',body.original_report!==undefined);text(body.uncertainty,'uncertainty');
   if(body.provider!==undefined&&!['manual','ollama','heuristic','local_heuristic'].includes(body.provider))throw new CommandError('Invalid capture provider');
   if(body.boundaries_confirmed!==undefined&&typeof body.boundaries_confirmed!=='boolean')throw new CommandError('Boundary confirmation must be boolean');
@@ -40,7 +41,7 @@ export function captureSession(req:Request,res:Response) {
  const session:Session={id:'ses-'+randomUUID(),journey_id:b.journey_id,node_id:node?.id||null,intention:b.intention.trim(),intention_provenance:'reconstructed',started_at:start,ended_at:end,status:deriveSessionStatusFromEndReason(b.end_reason||'NATURAL_COMPLETION'),end_reason:b.end_reason||'NATURAL_COMPLETION',quality:b.quality??null,reflection:b.reflection??null,note:b.note??null,created_at:now,updated_at:now,...owned()};
  data.sessions.push(session);
  const reviewed=b.reviewed_entries?.length?b.reviewed_entries:[{entry_type:'NOTE',note:b.note||b.original_report||b.intention,logged_at:end}];
- const report={id:'rep-'+randomUUID(),session_id:session.id,original_text:b.original_report??b.note??b.intention,captured_at:now,confirmed_at:now,provider:b.provider||'manual',proposal:structuredClone(b.proposal??null),uncertainty:b.uncertainty||null,claimed_started_at:start,claimed_ended_at:end,boundaries_confirmed:b.boundaries_confirmed===true,accepted_entries:structuredClone(reviewed),...owned()};
+ const report={id:'rep-'+randomUUID(),session_id:session.id,original_text:b.original_report??b.note??b.intention,captured_at:now,confirmed_at:now,client_confirmed_at:b.client_confirmed_at??null,client_command_id:(req as any).captureCommand?.id??null,provider:b.provider||'manual',proposal:structuredClone(b.proposal??null),uncertainty:b.uncertainty||null,claimed_started_at:start,claimed_ended_at:end,boundaries_confirmed:b.boundaries_confirmed===true,accepted_entries:structuredClone(reviewed),...owned()};
  (data.capture_reports??=[]).push(report);
  appendEvent(data,{entity_type:'Session',entity_id:session.id,event_type:'SESSION_STARTED',payload:session});
  appendEvent(data,{entity_type:'Session',entity_id:session.id,event_type:'CAPTURE_CONFIRMED',payload:report});
@@ -65,6 +66,9 @@ export function captureSession(req:Request,res:Response) {
  }
  if(report.boundaries_confirmed)add('TASK_PAUSED',end,'User-confirmed estimated activity boundary',node?.id||null,{time_provenance:'estimated'});
  appendEvent(data,{entity_type:'Session',entity_id:session.id,event_type:'SESSION_COMPLETED',payload:session});
- writeAppData(data);res.status(201).json({session,node:node||null,entry:created.at(-1),entries:created,report});
+ const response={session,node:node||null,entry:created.at(-1),entries:created,report};
+ const command=(req as any).captureCommand;
+ if(command)((data as any).command_receipts??=[]).push({...command,response:structuredClone(response),accepted_at:now,...owned()});
+ writeAppData(data);res.status(201).json(response);
 }
 

@@ -96,7 +96,7 @@ export function validateCommand(req: Pick<Request,'path'|'method'|'body'>,data: 
   }
   if (p==='/api/sessions' || p==='/api/sessions/quick-log') {
     const quick=p.endsWith('/quick-log');
-    fields(b,quick ? ['journey_id','node_id','node_name','node_status','work_type','duration_minutes','intention','condition','started_at','ended_at','quality','end_reason','reflection','note','status','entry_types','original_report','provider','proposal','uncertainty','boundaries_confirmed','reviewed_entries'] : ['journey_id','intention','label','initial_node_id','node_id','condition','predecessor_session_id','started_at']);
+    fields(b,quick ? ['journey_id','node_id','node_name','node_status','work_type','duration_minutes','intention','condition','started_at','ended_at','quality','end_reason','reflection','note','status','entry_types','original_report','provider','proposal','uncertainty','boundaries_confirmed','reviewed_entries','client_confirmed_at'] : ['journey_id','intention','label','initial_node_id','node_id','condition','predecessor_session_id','started_at']);
     thing(data,b.journey_id); nodeRef(data,b.node_id,b.journey_id); nodeRef(data,b.initial_node_id,b.journey_id); text(b.intention,'intention',true);
     if (b.predecessor_session_id) fail('Use the linked switch command to set predecessor_session_id');
     if (b.initial_node_id && b.node_id && b.initial_node_id!==b.node_id) fail('Initial node aliases disagree');
